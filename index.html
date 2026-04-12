@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CellSAM Local</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>CellSAM Local</h1>
+      <p>AIによる細胞画像セグメンテーション - ローカル動作版</p>
+      <div id="gpu-status" class="status-badge">確認中...</div>
+    </header>
+
+    <main class="main-layout">
+      <!-- 左パネル: 入力 + コントロール -->
+      <aside class="control-panel">
+
+        <section class="section">
+          <h2>画像入力</h2>
+          <div class="upload-area" id="upload-area">
+            <input type="file" id="file-input" accept="image/*" hidden>
+            <div id="upload-placeholder" class="upload-placeholder">
+              クリックまたはドロップで<br>画像を選択
+            </div>
+            <img id="input-preview" class="input-preview" hidden alt="input">
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>モデル選択</h2>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="model" value="tiny" checked>
+              <span>
+                <strong>SAM2.1-Tiny</strong>
+                <small>軽量・高速 (~155 MB) — CPU/GPU どちらでも動作</small>
+              </span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="model" value="small">
+              <span>
+                <strong>SAM2.1-Small</strong>
+                <small>バランス (~184 MB) — GPU 推奨</small>
+              </span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="model" value="base-plus">
+              <span>
+                <strong>SAM2.1-Base+</strong>
+                <small>高精度 (~667 MB) — NVIDIA/Apple GPU 推奨</small>
+              </span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="model" value="large">
+              <span>
+                <strong>SAM2.1-Large</strong>
+                <small>最高精度 (~910 MB) — 強力な GPU 必須</small>
+              </span>
+            </label>
+          </div>
+          <div id="model-status" class="model-status">モデル未ロード</div>
+        </section>
+
+        <section class="section">
+          <h2>検出設定</h2>
+          <div class="field">
+            <label>グリッド密度 (points/side)</label>
+            <div class="range-row">
+              <input type="range" id="points-per-side" min="8" max="32" step="4" value="16">
+              <input type="number" id="points-per-side-val" class="num-input" min="8" max="32" step="4" value="16">
+              <span class="num-unit">点</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>IoU しきい値</label>
+            <div class="range-row">
+              <input type="range" id="iou-thresh" min="0" max="1" step="0.01" value="0.96">
+              <input type="number" id="iou-thresh-val" class="num-input" min="0" max="1" step="0.01" value="0.96">
+            </div>
+          </div>
+          <div class="field">
+            <label>最小マスク面積 (px)</label>
+            <div class="range-row">
+              <input type="range" id="min-mask-area" min="0" max="1000" step="10" value="100">
+              <input type="number" id="min-mask-area-val" class="num-input" min="0" max="1000" step="10" value="100">
+            </div>
+          </div>
+          <div class="field">
+            <label>最大マスク比</label>
+            <div class="range-row">
+              <input type="range" id="max-mask-ratio" min="0.001" max="0.99" step="0.001" value="0.04">
+              <input type="number" id="max-mask-ratio-val" class="num-input" min="0.1" max="99" step="0.1" value="4.0">
+              <span class="num-unit">%</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>輪郭線の太さ</label>
+            <div class="range-row">
+              <input type="range" id="contour-width" min="1" max="8" step="0.5" value="4">
+              <input type="number" id="contour-width-val" class="num-input" min="1" max="8" step="0.5" value="4">
+              <span class="num-unit">px</span>
+            </div>
+          </div>
+          <button id="run-btn" class="btn btn-primary" disabled>検出実行</button>
+          <div id="progress-area" class="progress-area" hidden>
+            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+            <div id="progress-text" class="progress-text"></div>
+            <button id="cancel-btn" class="btn btn-sm btn-danger">キャンセル</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>フィルタ <small>(検出後に範囲が自動調整)</small></h2>
+          <div class="field">
+            <label>明度 (下限)</label>
+            <div class="range-row">
+              <input type="range" id="min-brightness" min="0" max="255" value="0" step="1">
+              <input type="number" id="min-brightness-val" class="num-input" min="0" max="255" step="1" value="0">
+            </div>
+          </div>
+          <div class="field">
+            <label>明度 (上限)</label>
+            <div class="range-row">
+              <input type="range" id="max-brightness" min="0" max="255" value="255" step="1">
+              <input type="number" id="max-brightness-val" class="num-input" min="0" max="255" step="1" value="255">
+            </div>
+          </div>
+          <div class="field">
+            <label>面積 (下限 px)</label>
+            <div class="range-row">
+              <input type="range" id="min-area" min="0" max="10000" value="0" step="1">
+              <input type="number" id="min-area-val" class="num-input" min="0" max="10000" step="1" value="0">
+            </div>
+          </div>
+          <div class="field">
+            <label>面積 (上限 px)</label>
+            <div class="range-row">
+              <input type="range" id="max-area" min="0" max="10000" value="10000" step="1">
+              <input type="number" id="max-area-val" class="num-input" min="0" max="10000" step="1" value="10000">
+            </div>
+          </div>
+          <div class="field">
+            <label>信頼度 (下限)</label>
+            <div class="range-row">
+              <input type="range" id="min-confidence" min="0" max="1" value="0" step="0.01">
+              <input type="number" id="min-confidence-val" class="num-input" min="0" max="1" step="0.01" value="0.00">
+            </div>
+          </div>
+          <button id="restore-btn" class="btn btn-secondary">全除外をリセット</button>
+        </section>
+
+      </aside>
+
+      <!-- 左右セパレーター -->
+      <div id="sep-h" class="separator separator-h" title="ドラッグで幅を調整"></div>
+
+      <!-- 右パネル: 結果表示 -->
+      <section class="result-panel">
+        <div class="canvas-container">
+          <canvas id="output-canvas" style="display:none"></canvas>
+          <div id="canvas-placeholder" class="canvas-placeholder">
+            画像をアップロードして<br>検出を実行してください
+          </div>
+        </div>
+        <!-- 上下セパレーター -->
+        <div id="sep-v" class="separator separator-v" title="ドラッグで高さを調整"></div>
+        <div class="summary-area">
+          <h2>検出サマリ <small id="summary-hint">(出力画像をクリックで個別除外・復元)</small></h2>
+          <div id="summary-text" class="summary-text"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!--
+    ONNX Runtime Web (all backends bundle: WASM + WebGPU)
+    SharpAI モデルは ORT 1.19 向けビルドのため 1.19.2 を使用
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.all.min.js"></script>
+  <script>
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/';
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
