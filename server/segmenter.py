@@ -10,7 +10,7 @@ from pathlib import Path
 
 HF_BASE = "https://huggingface.co"
 
-MODEL_URLS = {
+SAM2_MODEL_URLS = {
   "tiny": {
     "encoder": f"{HF_BASE}/SharpAI/sam2-hiera-tiny-onnx/resolve/main/encoder.onnx",
     "decoder": f"{HF_BASE}/SharpAI/sam2-hiera-tiny-onnx/resolve/main/decoder.onnx",
@@ -29,11 +29,29 @@ MODEL_URLS = {
   },
 }
 
+MOBILE_SAM_MODEL_URLS = {
+  "mobile-sam": {
+    "encoder": f"{HF_BASE}/Heliosoph/sam-onnx/resolve/main/mobile_sam_image_encoder.onnx",
+    "decoder": f"{HF_BASE}/Heliosoph/sam-onnx/resolve/main/sam_mask_decoder_single.onnx",
+  },
+}
+
+MODEL_URLS = {
+  **SAM2_MODEL_URLS,
+  **MOBILE_SAM_MODEL_URLS,
+}
+
+MODEL_FAMILIES = {
+  **{model: "sam2" for model in SAM2_MODEL_URLS},
+  **{model: "mobile-sam" for model in MOBILE_SAM_MODEL_URLS},
+}
+
 MODEL_LABELS = {
   "tiny": "SAM2.1-Tiny",
   "small": "SAM2.1-Small",
   "base-plus": "SAM2.1-Base+",
   "large": "SAM2.1-Large",
+  "mobile-sam": "MobileSAM",
 }
 
 SAM2_SIZE = 1024
@@ -76,15 +94,28 @@ class Sam2OnnxSegmenter:
     sessions = self._load_model(model, ort)
 
     image = image_cls.open(BytesIO(content)).convert("RGB")
-    prep = self._preprocess_image(image, np)
-    encoder_output = _named_outputs(sessions.encoder, sessions.encoder.run(None, {"image": prep["tensor"]}))
+    family = MODEL_FAMILIES[model]
+    if family == "mobile-sam":
+      prep = self._preprocess_image(image, np, center_pad=False)
+      encoder_output = _named_outputs(
+        sessions.encoder,
+        sessions.encoder.run(None, {"input_image": prep["tensor_hwc"]}),
+      )
+      decode_point = self._decode_mobile_sam_point
+    else:
+      prep = self._preprocess_image(image, np, center_pad=True)
+      encoder_output = _named_outputs(
+        sessions.encoder,
+        sessions.encoder.run(None, {"image": prep["tensor"]}),
+      )
+      decode_point = self._decode_sam2_point
 
     raw_masks = []
     failures = 0
     last_error = None
     for x, y in _make_grid(points_per_side, prep["orig_w"], prep["orig_h"]):
       try:
-        mask, iou = self._decode_point(sessions.decoder, encoder_output, prep, x, y, np, image_cls)
+        mask, iou = decode_point(sessions.decoder, encoder_output, prep, x, y, np, image_cls)
       except Exception as exc:
         failures += 1
         last_error = exc
@@ -153,13 +184,17 @@ class Sam2OnnxSegmenter:
         _download_atomic(MODEL_URLS[model][key], path)
     return paths
 
-  def _preprocess_image(self, image, np) -> dict:
+  def _preprocess_image(self, image, np, center_pad: bool) -> dict:
     orig_w, orig_h = image.size
     scale = min(SAM2_SIZE / orig_w, SAM2_SIZE / orig_h)
     scaled_w = round(orig_w * scale)
     scaled_h = round(orig_h * scale)
-    pad_x = (SAM2_SIZE - scaled_w) // 2
-    pad_y = (SAM2_SIZE - scaled_h) // 2
+    if center_pad:
+      pad_x = (SAM2_SIZE - scaled_w) // 2
+      pad_y = (SAM2_SIZE - scaled_h) // 2
+    else:
+      pad_x = 0
+      pad_y = 0
 
     canvas = self._image_cls.new("RGB", (SAM2_SIZE, SAM2_SIZE), (0, 0, 0))
     canvas.paste(image.resize((scaled_w, scaled_h), self._image_cls.Resampling.BILINEAR), (pad_x, pad_y))
@@ -172,6 +207,7 @@ class Sam2OnnxSegmenter:
 
     return {
       "tensor": tensor,
+      "tensor_hwc": arr.astype("float32"),
       "scale": scale,
       "pad_x": pad_x,
       "pad_y": pad_y,
@@ -181,7 +217,7 @@ class Sam2OnnxSegmenter:
       "orig_h": orig_h,
     }
 
-  def _decode_point(self, decoder, encoder_output, prep, x: int, y: int, np, image_cls):
+  def _decode_sam2_point(self, decoder, encoder_output, prep, x: int, y: int, np, image_cls):
     sx = x * prep["scale"] + prep["pad_x"]
     sy = y * prep["scale"] + prep["pad_y"]
     image_embed = encoder_output.get("image_embed")
@@ -210,6 +246,38 @@ class Sam2OnnxSegmenter:
     best_idx = int(iou_flat.argmax())
     raw = mask_data.reshape(-1, MASK_LOWRES, MASK_LOWRES)[best_idx]
     mask = _upsample_and_crop(raw, prep, np, image_cls)
+    return mask, float(iou_flat[best_idx])
+
+  def _decode_mobile_sam_point(self, decoder, encoder_output, prep, x: int, y: int, np, image_cls):
+    sx = x * prep["scale"] + prep["pad_x"]
+    sy = y * prep["scale"] + prep["pad_y"]
+    image_embeddings = encoder_output.get("image_embeddings")
+    if image_embeddings is None:
+      image_embeddings = encoder_output.get("image_embed")
+    if image_embeddings is None:
+      image_embeddings = next(iter(encoder_output.values()))
+
+    feeds = {
+      "image_embeddings": image_embeddings,
+      "point_coords": np.asarray([[[sx, sy], [0, 0]]], dtype="float32"),
+      "point_labels": np.asarray([[1, -1]], dtype="float32"),
+      "mask_input": np.zeros((1, 1, MASK_LOWRES, MASK_LOWRES), dtype="float32"),
+      "has_mask_input": np.asarray([0], dtype="float32"),
+      "orig_im_size": np.asarray([prep["orig_h"], prep["orig_w"]], dtype="float32"),
+    }
+
+    output_names = ["iou_predictions", "low_res_masks"]
+    output = dict(zip(output_names, decoder.run(output_names, feeds)))
+    iou_data = output.get("iou_predictions")
+    if iou_data is None:
+      iou_data = output.get("iou_pred")
+    mask_data = output.get("masks")
+    if mask_data is None:
+      mask_data = output.get("low_res_masks")
+
+    iou_flat = iou_data.reshape(-1)
+    best_idx = int(iou_flat.argmax())
+    mask = _restore_decoder_mask(mask_data, best_idx, prep, np, image_cls)
     return mask, float(iou_flat[best_idx])
 
 
@@ -257,6 +325,38 @@ def _upsample_and_crop(raw, prep: dict, np, image_cls):
   ))
   restored = crop.resize((prep["orig_w"], prep["orig_h"]), image_cls.Resampling.BILINEAR)
   return np.asarray(restored) > 0
+
+
+def _restore_decoder_mask(mask_data, best_idx: int, prep: dict, np, image_cls):
+  data = np.asarray(mask_data)
+  height = int(data.shape[-2])
+  width = int(data.shape[-1])
+  masks = data.reshape(-1, height, width)
+  raw = masks[min(best_idx, len(masks) - 1)]
+
+  if width == prep["orig_w"] and height == prep["orig_h"]:
+    return _threshold_mask(raw, np)
+  if width == MASK_LOWRES and height == MASK_LOWRES:
+    return _upsample_and_crop(raw, prep, np, image_cls)
+  if width == SAM2_SIZE and height == SAM2_SIZE:
+    canvas_mask = image_cls.fromarray(raw.astype("float32"), mode="F")
+    crop = canvas_mask.crop((
+      prep["pad_x"],
+      prep["pad_y"],
+      prep["pad_x"] + prep["scaled_w"],
+      prep["pad_y"] + prep["scaled_h"],
+    ))
+    restored = crop.resize((prep["orig_w"], prep["orig_h"]), image_cls.Resampling.BILINEAR)
+    return _threshold_mask(np.asarray(restored), np)
+
+  raise RuntimeError(f"Unsupported decoder mask shape: {data.shape}")
+
+
+def _threshold_mask(raw, np):
+  if raw.dtype == np.bool_:
+    return raw
+  threshold = 0.0 if float(np.nanmin(raw)) < 0.0 else 0.5
+  return raw > threshold
 
 
 def _encode_rle(mask, np) -> dict:

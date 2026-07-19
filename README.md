@@ -69,6 +69,28 @@ The app uses ONNX SAM 2.1 models hosted by
 | SAM2.1-Base+ | `SharpAI/sam2-hiera-base-plus-onnx` | 667 MB | Higher accuracy, GPU recommended |
 | SAM2.1-Large | `SharpAI/sam2-hiera-large-onnx` | 910 MB | Highest accuracy, strong GPU recommended |
 
+Experimental server-side model:
+
+| Model key | Source | Approx. size | License note | Status |
+| --- | --- | ---: | --- | --- |
+| `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | Model card lists Apache-2.0. It bundles MobileSAM's ViT-T encoder with a SAM mask decoder. | Server benchmark/API candidate; not yet exposed in the browser UI |
+
+Adopted model license notes:
+
+- The SharpAI ONNX model cards used by this project list the conversions as
+  Apache-2.0.
+- The experimental MobileSAM ONNX bundle is also listed as Apache-2.0 on its
+  Hugging Face model card.
+- These models are converted from Meta SAM 2.1 models, so check the upstream
+  [SAM 2 repository](https://github.com/facebookresearch/sam2) and model terms
+  for the intended use.
+- Research-use-compatible candidate models can be benchmarked locally. Before a
+  candidate is exposed through the UI or server API, its source, license, mode,
+  and restrictions must be documented here and in `README.ja.md`.
+
+Candidate models and license notes are tracked in
+[docs/model_candidates.md](docs/model_candidates.md).
+
 When WebGPU is available, the encoder uses the pre-optimized `.ort` model.
 Otherwise, the app uses the `.onnx` model with the WASM backend.
 
@@ -198,6 +220,17 @@ The tests use Node's built-in `node:test` runner and cover the detection data
 model, derived metrics, filtering, click-toggle behavior, and server RLE mask
 decoding.
 
+For server-side validation on local, ignored images:
+
+```bash
+npm run benchmark:server -- --limit 2
+npm run benchmark:server -- --models tiny mobile-sam --limit 2
+```
+
+The benchmark reads images from `assets/validation/`, runs the server
+segmenter directly, and writes JSON reports under `reports/`. Both directories
+are ignored by git so validation inputs and outputs stay separate from commits.
+
 ## Project Structure
 
 ```text
@@ -212,10 +245,16 @@ decoding.
 │   ├── sam2.js             # SAM 2.1 ONNX Runtime Web wrapper
 │   ├── server_api.js       # Same-origin server inference client
 │   └── visualize.js        # Canvas drawing helpers
+├── docs/
+│   └── model_candidates.md # Candidate model and license notes
 ├── server/
 │   ├── app.py              # FastAPI UI/API server for LAN deployments
+│   ├── run_gpu_python.sh   # Shared GPU Python environment launcher
+│   ├── run_gpu_server.sh   # LAN server launcher
 │   ├── segmenter.py        # Server-side SAM 2.1 ONNX Runtime inference
 │   └── requirements.txt    # GPU server Python dependencies
+├── scripts/
+│   └── benchmark_models.py # Server model benchmark harness
 ├── assets/
 │   └── sample.png          # Default sample image
 ├── test/

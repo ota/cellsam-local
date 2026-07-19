@@ -1,6 +1,9 @@
 # Local validation images are kept out of git.
 assets/validation/
 
+# Local benchmark and validation outputs.
+reports/
+
 # Local Python environment for server mode.
 .venv/
 __pycache__/

@@ -68,6 +68,28 @@ ONNX 版 SAM 2.1 モデルを使用します。
 | SAM2.1-Base+ | `SharpAI/sam2-hiera-base-plus-onnx` | 667 MB | 高精度。GPU 推奨 |
 | SAM2.1-Large | `SharpAI/sam2-hiera-large-onnx` | 910 MB | 最高精度。強力な GPU 推奨 |
 
+実験的なサーバ側モデル:
+
+| モデルキー | 出典 | 目安サイズ | ライセンス注記 | 状態 |
+| --- | --- | ---: | --- | --- |
+| `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | モデルカードでは Apache-2.0 と記載されています。MobileSAM の ViT-T エンコーダと SAM マスクデコーダの ONNX バンドルです。 | サーバ側ベンチマーク/API 候補。ブラウザ UI にはまだ表示していません |
+
+採用済みモデルのライセンス注記:
+
+- このプロジェクトで使う SharpAI の ONNX モデルカードでは、変換モデルの
+  ライセンスは Apache-2.0 と記載されています。
+- 実験的に追加した MobileSAM ONNX バンドルも、Hugging Face のモデルカードでは
+  Apache-2.0 と記載されています。
+- これらは Meta SAM 2.1 モデルからの変換版なので、利用目的に応じて上流の
+  [SAM 2 リポジトリ](https://github.com/facebookresearch/sam2) とモデル利用条件も
+  確認してください。
+- 研究用途で利用可能な候補モデルはローカル検証の対象に含めます。ただし、候補を
+  UI またはサーバ API から使える状態にする前に、出典、ライセンス、推論モード、
+  制約をこの README と `README.md` に明記します。
+
+候補モデルとライセンスの整理は
+[docs/model_candidates.md](docs/model_candidates.md) にまとめています。
+
 WebGPU が利用できる場合、エンコーダには事前最適化済みの `.ort` モデルを使用します。
 それ以外の場合は WASM バックエンドで `.onnx` モデルを使用します。
 
@@ -196,6 +218,17 @@ npm run test:watch
 派生指標、フィルタリング、クリックによる除外と復元、サーバ応答の RLE マスク復元を
 対象にしています。
 
+ローカルの検証画像でサーバ側推論を計測します。
+
+```bash
+npm run benchmark:server -- --limit 2
+npm run benchmark:server -- --models tiny mobile-sam --limit 2
+```
+
+ベンチマークは `assets/validation/` の画像を読み、サーバ用セグメンターを直接実行し、
+JSON レポートを `reports/` に書き出します。どちらのディレクトリも git では無視されるため、
+検証用入力と出力をコミット対象から分けて扱えます。
+
 ## プロジェクト構成
 
 ```text
@@ -210,10 +243,16 @@ npm run test:watch
 │   ├── sam2.js             # SAM 2.1 ONNX Runtime Web ラッパー
 │   ├── server_api.js       # 同一オリジンのサーバ推論クライアント
 │   └── visualize.js        # Canvas 描画ヘルパー
+├── docs/
+│   └── model_candidates.md # 候補モデルとライセンス注記
 ├── server/
 │   ├── app.py              # LAN 配信用 FastAPI UI/API サーバ
+│   ├── run_gpu_python.sh   # GPU 用 Python 環境の共通起動ヘルパー
+│   ├── run_gpu_server.sh   # LAN サーバ起動スクリプト
 │   ├── segmenter.py        # サーバ側 SAM 2.1 ONNX Runtime 推論
 │   └── requirements.txt    # GPU サーバ用 Python 依存パッケージ
+├── scripts/
+│   └── benchmark_models.py # サーバモデルのベンチマーク
 ├── assets/
 │   └── sample.png          # デフォルトサンプル画像
 ├── test/
