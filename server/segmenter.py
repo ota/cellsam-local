@@ -44,7 +44,10 @@ MODEL_URLS = {
 MODEL_FAMILIES = {
   **{model: "sam2" for model in SAM2_MODEL_URLS},
   **{model: "mobile-sam" for model in MOBILE_SAM_MODEL_URLS},
+  "cellsam": "cellsam",
 }
+
+MODEL_KEYS = list(MODEL_FAMILIES.keys())
 
 MODEL_LABELS = {
   "tiny": "SAM2.1-Tiny",
@@ -52,6 +55,7 @@ MODEL_LABELS = {
   "base-plus": "SAM2.1-Base+",
   "large": "SAM2.1-Large",
   "mobile-sam": "MobileSAM",
+  "cellsam": "CellSAM",
 }
 
 SAM2_SIZE = 1024
@@ -72,6 +76,7 @@ class Sam2OnnxSegmenter:
     default_cache = Path.home() / ".cache" / "cellsam-local" / "models"
     self.cache_dir = Path(cache_dir or os.getenv("CELLSAM_MODEL_CACHE", default_cache))
     self.sessions: dict[str, ModelSessions] = {}
+    self._cellsam = None
     self._ort = None
     self._np = None
     self._image_cls = None
@@ -83,18 +88,26 @@ class Sam2OnnxSegmenter:
     return {
       "provider": provider,
       "availableProviders": providers,
-      "models": list(MODEL_URLS.keys()),
+      "models": MODEL_KEYS,
+      "experimentalModels": {
+        "cellsam": _cellsam_health(),
+      },
     }
 
   def segment_image_bytes(self, content: bytes, model: str, points_per_side: int) -> dict:
     if not content:
       raise ValueError("Uploaded image is empty")
 
+    family = MODEL_FAMILIES.get(model)
+    if family == "cellsam":
+      return self._segment_cellsam_image_bytes(content)
+    if family is None:
+      raise ValueError(f"Unknown model: {model}")
+
     ort, np, image_cls = self._deps()
     sessions = self._load_model(model, ort)
 
     image = image_cls.open(BytesIO(content)).convert("RGB")
-    family = MODEL_FAMILIES[model]
     if family == "mobile-sam":
       prep = self._preprocess_image(image, np, center_pad=False)
       encoder_output = _named_outputs(
@@ -135,6 +148,12 @@ class Sam2OnnxSegmenter:
       "rawMasks": raw_masks,
       "provider": sessions.provider,
     }
+
+  def _segment_cellsam_image_bytes(self, content: bytes) -> dict:
+    if self._cellsam is None:
+      from .cellsam_backend import CellSamBackend
+      self._cellsam = CellSamBackend()
+    return self._cellsam.segment_image_bytes(content)
 
   def _deps(self):
     if self._ort is not None:
@@ -285,6 +304,18 @@ def _preferred_providers(available: list[str]) -> list[str]:
   if "CUDAExecutionProvider" in available:
     return ["CUDAExecutionProvider", "CPUExecutionProvider"]
   return ["CPUExecutionProvider"]
+
+
+def _cellsam_health() -> dict:
+  try:
+    from .cellsam_backend import cellsam_health
+  except Exception as exc:
+    return {
+      "available": False,
+      "error": str(exc),
+      "license": "CellSAM code is Apache-2.0; official weights are non-commercial academic use only.",
+    }
+  return cellsam_health()
 
 
 def _download_atomic(url: str, dest: Path):

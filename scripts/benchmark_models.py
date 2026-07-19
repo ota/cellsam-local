@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
   sys.path.insert(0, str(ROOT))
 
-from server.segmenter import MODEL_LABELS, MODEL_URLS, Sam2OnnxSegmenter
+from server.segmenter import MODEL_KEYS, MODEL_LABELS, Sam2OnnxSegmenter
 
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
@@ -35,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     "--models",
     nargs="+",
     default=["tiny"],
-    help=f"Model keys to run. Available: {', '.join(MODEL_URLS)}",
+    help=f"Model keys to run. Available: {', '.join(MODEL_KEYS)}",
   )
   parser.add_argument(
     "--points-per-side",
@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
   args = parse_args()
-  invalid_models = [model for model in args.models if model not in MODEL_URLS]
+  invalid_models = [model for model in args.models if model not in MODEL_KEYS]
   if invalid_models:
     print(f"Unknown model(s): {', '.join(invalid_models)}", file=sys.stderr)
     return 2

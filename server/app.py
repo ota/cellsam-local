@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .segmenter import MODEL_URLS, Sam2OnnxSegmenter
+from .segmenter import MODEL_KEYS, Sam2OnnxSegmenter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +39,7 @@ async def segment(
   model: str = Form("tiny"),
   points_per_side: int = Form(8),
 ):
-  if model not in MODEL_URLS:
+  if model not in MODEL_KEYS:
     raise HTTPException(status_code=400, detail=f"Unknown model: {model}")
   if points_per_side < 4 or points_per_side > 32:
     raise HTTPException(status_code=400, detail="points_per_side must be between 4 and 32")

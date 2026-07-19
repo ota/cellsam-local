@@ -73,6 +73,7 @@ ONNX 版 SAM 2.1 モデルを使用します。
 | モデルキー | 出典 | 目安サイズ | ライセンス注記 | 状態 |
 | --- | --- | ---: | --- | --- |
 | `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | モデルカードでは Apache-2.0 と記載されています。MobileSAM の ViT-T エンコーダと SAM マスクデコーダの ONNX バンドルです。 | サーバ側ベンチマーク/API 候補。ブラウザ UI にはまだ表示していません |
+| `cellsam` | [`vanvalenlab/cellSAM`](https://github.com/vanvalenlab/cellSAM) | CellSAM がダウンロード | コードは Apache-2.0。公式重みは DeepCell access が必要で、非商用 academic 用途に限定されています。 | 任意のサーバ専用 backend |
 
 採用済みモデルのライセンス注記:
 
@@ -80,6 +81,8 @@ ONNX 版 SAM 2.1 モデルを使用します。
   ライセンスは Apache-2.0 と記載されています。
 - 実験的に追加した MobileSAM ONNX バンドルも、Hugging Face のモデルカードでは
   Apache-2.0 と記載されています。
+- CellSAM は任意 backend です。公式の事前学習済み重みには DeepCell の
+  `DEEPCELL_ACCESS_TOKEN`、またはローカル重みを指す `CELLSAM_MODEL_PATH` が必要です。
 - これらは Meta SAM 2.1 モデルからの変換版なので、利用目的に応じて上流の
   [SAM 2 リポジトリ](https://github.com/facebookresearch/sam2) とモデル利用条件も
   確認してください。
@@ -111,6 +114,8 @@ LAN GPU サーバモード:
 - GPU 高速化には NVIDIA CUDA 対応の ONNX Runtime 環境
 - `server/requirements.txt` の依存パッケージ
 - 初回モデルダウンロードのための、サーバ側のネットワーク接続
+- 任意の CellSAM backend を使う場合は `server/requirements-cellsam.txt` の依存関係と、
+  公式 CellSAM 重み用の `DEEPCELL_ACCESS_TOKEN`
 
 このアプリは ES modules を使うため、`file://` で `index.html` を直接開く方法では
 安定して動作しません。HTTP サーバー経由で配信してください。
@@ -160,6 +165,18 @@ ONNX ファイルがサーバ上の `~/.cache/cellsam-local/models` にダウン
 | --- | --- |
 | `GET /api/health` | サーバモード、依存関係の準備状態、推論 provider、利用可能モデルを返します |
 | `POST /api/segment` | 画像、モデル名、`points_per_side` を受け取り、RLE 形式の生マスクを返します |
+
+任意の CellSAM backend のセットアップ:
+
+```bash
+uv pip install --python .venv/bin/python -r server/requirements-cellsam.txt
+export DEEPCELL_ACCESS_TOKEN=<token-from-users.deepcell.org>
+npm run benchmark:server -- --models cellsam --limit 1 --write-overlays
+```
+
+互換性のある重みをローカルに持っている場合は、`DEEPCELL_ACCESS_TOKEN` の代わりに
+`CELLSAM_MODEL_PATH=/path/to/weights` を指定できます。CellSAM は独自の cell-finding
+pipeline を使ってラベル付きインスタンスを返すため、`points_per_side` は無視されます。
 
 ## 基本的な使い方
 
@@ -252,8 +269,10 @@ JSON レポートを `reports/` に書き出します。どちらのディレク
 │   ├── app.py              # LAN 配信用 FastAPI UI/API サーバ
 │   ├── run_gpu_python.sh   # GPU 用 Python 環境の共通起動ヘルパー
 │   ├── run_gpu_server.sh   # LAN サーバ起動スクリプト
+│   ├── cellsam_backend.py  # 任意の CellSAM サーバ専用 backend
 │   ├── segmenter.py        # サーバ側 SAM 2.1 ONNX Runtime 推論
-│   └── requirements.txt    # GPU サーバ用 Python 依存パッケージ
+│   ├── requirements.txt    # GPU サーバ用 Python 依存パッケージ
+│   └── requirements-cellsam.txt # 任意の CellSAM 依存パッケージ
 ├── scripts/
 │   └── benchmark_models.py # サーバモデルのベンチマーク
 ├── assets/

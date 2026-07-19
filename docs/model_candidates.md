@@ -22,6 +22,7 @@ the README before it is treated as adopted.
 | --- | --- | --- | --- | --- |
 | SAM 2.1 ONNX Tiny/Small/Base+/Large | [SharpAI SAM2 ONNX models](https://huggingface.co/SharpAI) | Hugging Face model cards mark the ONNX conversions as Apache-2.0. The models are converted from Meta SAM 2.1, so Meta SAM 2.1 terms should also be checked for the intended use. | Browser and server | Adopted |
 | MobileSAM ONNX | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM), [Heliosoph/sam-onnx](https://huggingface.co/Heliosoph/sam-onnx) | Official repo and ONNX bundle card list Apache-2.0. | Server benchmark/API candidate | Experimental; not yet exposed in the browser UI |
+| CellSAM | [cellSAM docs](https://vanvalenlab.github.io/cellSAM/), [cellSAM repo](https://github.com/vanvalenlab/cellSAM) | Code is Apache-2.0. Official pretrained weights require DeepCell access and are licensed under a modified Apache license for non-commercial academic use only. | Server-only optional backend | Experimental; requires `server/requirements-cellsam.txt` and `DEEPCELL_ACCESS_TOKEN` or `CELLSAM_MODEL_PATH` |
 
 Initial local smoke test on one ignored validation image with `pointsPerSide=4`
 showed MobileSAM returning valid masks through CUDA, but slower than
@@ -36,9 +37,8 @@ wrapper.
 | ---: | --- | --- | --- | --- | --- |
 | 1 | Cellpose cyto3 ONNX | [kmlyyll/cellpose-cyto3-onnx](https://huggingface.co/kmlyyll/cellpose-cyto3-onnx) | Model card lists a custom redistribution-with-permission license. Verify terms before adoption. | Server first | Small cell-specific model; useful comparison against SAM-style masks. |
 | 2 | Cellpose-SAM / CPSAM | [Cellpose docs](https://cellpose.readthedocs.io/en/latest/), [mouseland/cellpose-sam](https://huggingface.co/mouseland/cellpose-sam) | Cellpose-SAM model card lists BSD-3-Clause. Some ONNX cards warn about non-commercial training data, so adoption needs explicit README warning. | Server first | Strong cell-specific baseline, but heavier than the current local target. |
-| 3 | CellSAM | [cellSAM docs](https://vanvalenlab.github.io/cellSAM/), [cellSAM repo](https://github.com/vanvalenlab/cellSAM) | Official repo is Apache-2.0. Some third-party ONNX exports add academic/non-commercial warnings; use the official PyTorch path first. | Server only | Biology-specific segmentation for diverse cell images; good GPU-server candidate. |
-| 4 | micro-sam | [micro-sam repo](https://github.com/computational-cell-analytics/micro-sam) | MIT license. | Server only | Microscopy-oriented SAM workflows, including fine-tuned models and interactive review. |
-| 5 | EfficientSAM | [EfficientSAM repo](https://github.com/yformer/EfficientSAM) | Apache-2.0. | Browser candidate after ONNX compatibility check | Smaller general segmentation baseline. |
+| 3 | micro-sam | [micro-sam repo](https://github.com/computational-cell-analytics/micro-sam) | MIT license. | Server only | Microscopy-oriented SAM workflows, including fine-tuned models and interactive review. |
+| 4 | EfficientSAM | [EfficientSAM repo](https://github.com/yformer/EfficientSAM) | Apache-2.0. | Browser candidate after ONNX compatibility check | Smaller general segmentation baseline. |
 
 ## Caution / Lower Priority
 
@@ -55,5 +55,7 @@ wrapper.
    images.
 3. Compare `tiny` and `mobile-sam` with the same benchmark settings, then decide
    whether MobileSAM should be promoted to the browser UI.
-4. Add one cell-specific server backend, preferably Cellpose cyto3 or official
-   CellSAM, with README license notes before exposing it in the UI.
+4. Install and token-test the official CellSAM backend, then run it against the
+   ignored validation images with overlays.
+5. Add Cellpose cyto3 as the next small cell-specific baseline if its license is
+   acceptable for the intended research workflow.

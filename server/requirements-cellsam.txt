@@ -1,0 +1,4 @@
+# Optional server-only CellSAM backend.
+# CellSAM code is Apache-2.0. Official pretrained weights require a
+# DEEPCELL_ACCESS_TOKEN and are licensed for non-commercial academic use only.
+git+https://github.com/vanvalenlab/cellSAM.git

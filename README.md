@@ -74,6 +74,7 @@ Experimental server-side model:
 | Model key | Source | Approx. size | License note | Status |
 | --- | --- | ---: | --- | --- |
 | `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | Model card lists Apache-2.0. It bundles MobileSAM's ViT-T encoder with a SAM mask decoder. | Server benchmark/API candidate; not yet exposed in the browser UI |
+| `cellsam` | [`vanvalenlab/cellSAM`](https://github.com/vanvalenlab/cellSAM) | Downloaded by CellSAM | Code is Apache-2.0; official weights require DeepCell access and are licensed for non-commercial academic use only. | Optional server-only backend |
 
 Adopted model license notes:
 
@@ -81,6 +82,8 @@ Adopted model license notes:
   Apache-2.0.
 - The experimental MobileSAM ONNX bundle is also listed as Apache-2.0 on its
   Hugging Face model card.
+- CellSAM is optional because its official pretrained weights require
+  `DEEPCELL_ACCESS_TOKEN` from DeepCell or a local `CELLSAM_MODEL_PATH`.
 - These models are converted from Meta SAM 2.1 models, so check the upstream
   [SAM 2 repository](https://github.com/facebookresearch/sam2) and model terms
   for the intended use.
@@ -112,6 +115,8 @@ For LAN GPU server mode:
 - NVIDIA CUDA-compatible ONNX Runtime environment for GPU acceleration
 - Dependencies from `server/requirements.txt`
 - Network access from the server for the initial model download
+- Optional CellSAM backend dependencies from `server/requirements-cellsam.txt`
+  and `DEEPCELL_ACCESS_TOKEN` for official CellSAM weights
 
 Because the app uses ES modules, opening `index.html` directly with `file://`
 will not work reliably. Serve the directory over HTTP instead.
@@ -161,6 +166,18 @@ Server mode exposes:
 | --- | --- |
 | `GET /api/health` | Reports server mode, dependency readiness, provider, and available models |
 | `POST /api/segment` | Accepts an image, model name, and `points_per_side`; returns RLE raw masks |
+
+Optional CellSAM backend setup:
+
+```bash
+uv pip install --python .venv/bin/python -r server/requirements-cellsam.txt
+export DEEPCELL_ACCESS_TOKEN=<token-from-users.deepcell.org>
+npm run benchmark:server -- --models cellsam --limit 1 --write-overlays
+```
+
+Use `CELLSAM_MODEL_PATH=/path/to/weights` instead of `DEEPCELL_ACCESS_TOKEN` if
+you already have compatible weights locally. CellSAM ignores `points_per_side`
+because it runs its own cell-finding pipeline and returns labeled instances.
 
 ## Basic Usage
 
@@ -254,8 +271,10 @@ With `--write-overlays`, preview PNGs with kept masks are written under
 │   ├── app.py              # FastAPI UI/API server for LAN deployments
 │   ├── run_gpu_python.sh   # Shared GPU Python environment launcher
 │   ├── run_gpu_server.sh   # LAN server launcher
+│   ├── cellsam_backend.py  # Optional CellSAM server-only backend
 │   ├── segmenter.py        # Server-side SAM 2.1 ONNX Runtime inference
-│   └── requirements.txt    # GPU server Python dependencies
+│   ├── requirements.txt    # GPU server Python dependencies
+│   └── requirements-cellsam.txt # Optional CellSAM dependencies
 ├── scripts/
 │   └── benchmark_models.py # Server model benchmark harness
 ├── assets/
