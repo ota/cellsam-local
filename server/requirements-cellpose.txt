@@ -1,0 +1,12 @@
+# Optional standalone Cellpose server environment.
+# Keep this in .venv-cellpose to avoid CUDA wheel conflicts with onnxruntime-gpu.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+numpy>=1.26
+packaging>=24
+pillow>=10
+
+# Cellpose code and mouseland/cellpose-sam model card are BSD-3-Clause.
+# Upstream README notes CC-BY-NC training data, so keep this as research/evaluation.
+cellpose>=4.0,<5

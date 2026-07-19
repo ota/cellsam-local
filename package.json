@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node --test test/detection.test.js test/server_api.test.js",
-    "test:watch": "node --test --watch test/detection.test.js test/server_api.test.js",
+    "test": "node --test test/detection.test.js test/sam2.test.js test/server_api.test.js && python3 -m unittest discover -s test -p 'test_*.py'",
+    "test:watch": "node --test --watch test/detection.test.js test/sam2.test.js test/server_api.test.js",
     "serve": "python3 -m http.server 8080",
     "serve:gpu": "sh server/run_gpu_server.sh --host 0.0.0.0 --port 8080",
-    "benchmark:server": "sh server/run_gpu_python.sh scripts/benchmark_models.py --images assets/validation --points-per-side 4"
+    "serve:gpu:cellpose": "CELLSAM_PYTHON=.venv-cellpose/bin/python CELLSAM_GPU_LIB_MODE=torch sh server/run_gpu_server.sh --host 0.0.0.0 --port 8080",
+    "benchmark:server": "sh server/run_gpu_python.sh scripts/benchmark_models.py --images assets/validation --points-per-side 4",
+    "benchmark:cellpose": "CELLSAM_PYTHON=.venv-cellpose/bin/python CELLSAM_GPU_LIB_MODE=torch sh server/run_gpu_python.sh scripts/benchmark_models.py --images assets/validation --points-per-side 4 --models cellpose-cpsam-v2"
   }
 }

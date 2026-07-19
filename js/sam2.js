@@ -27,6 +27,10 @@
  */
 
 const HF_BASE = 'https://huggingface.co';
+const ORT_VERSION = '1.19.2';
+const ORT_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
+let ortRuntime = globalThis.ort ?? null;
+let ortLoadPromise = null;
 
 // WebGPU 用: .ort (pre-optimized)、WASM 用: .onnx
 const MODEL_URLS = {
@@ -95,6 +99,7 @@ export class SAM2 {
 
     const urls = MODEL_URLS[modelType];
     if (!urls) throw new Error(`Unknown model type: ${modelType}`);
+    await ensureOnnxRuntime();
 
     const useWebgpu = this.executionProvider === 'webgpu';
 
@@ -126,22 +131,22 @@ export class SAM2 {
         enableMemPattern: false,
       };
       try {
-        this.encoderSession = await ort.InferenceSession.create(encBytes(), gpuOpts);
-        this.decoderSession = await ort.InferenceSession.create(decBytes(), gpuOpts);
+        this.encoderSession = await ortRuntime.InferenceSession.create(encBytes(), gpuOpts);
+        this.decoderSession = await ortRuntime.InferenceSession.create(decBytes(), gpuOpts);
       } catch (e) {
         console.warn('WebGPU session failed, falling back to wasm:', e);
         // WASM フォールバック時は .onnx を再ダウンロード
         onProgress?.({ message: 'WASM でリトライ中...', progress: 0.9 });
         const encBufWasm = await fetchWithProgress(urls.encoderWasm, () => {});
         const wasmOpts = { executionProviders: ['wasm'] };
-        this.encoderSession = await ort.InferenceSession.create(new Uint8Array(encBufWasm), wasmOpts);
-        this.decoderSession = await ort.InferenceSession.create(decBytes(), wasmOpts);
+        this.encoderSession = await ortRuntime.InferenceSession.create(new Uint8Array(encBufWasm), wasmOpts);
+        this.decoderSession = await ortRuntime.InferenceSession.create(decBytes(), wasmOpts);
         this.executionProvider = 'wasm';
       }
     } else {
       const wasmOpts = { executionProviders: ['wasm'] };
-      this.encoderSession = await ort.InferenceSession.create(encBytes(), wasmOpts);
-      this.decoderSession = await ort.InferenceSession.create(decBytes(), wasmOpts);
+      this.encoderSession = await ortRuntime.InferenceSession.create(encBytes(), wasmOpts);
+      this.decoderSession = await ortRuntime.InferenceSession.create(decBytes(), wasmOpts);
     }
 
     this.currentModel = modelType;
@@ -179,10 +184,10 @@ export class SAM2 {
     // これがないと全画像を単一マスクとして出力する。
     const feeds = {
       ...buildDecoderFeeds(output),
-      point_coords:   new ort.Tensor('float32', new Float32Array([sx, sy, 0, 0]), [1, 2, 2]),
-      point_labels:   new ort.Tensor('float32', new Float32Array([1, -1]),        [1, 2]),
-      mask_input:     new ort.Tensor('float32', new Float32Array(MASK_LOWRES * MASK_LOWRES), [1, 1, MASK_LOWRES, MASK_LOWRES]),
-      has_mask_input: new ort.Tensor('float32', new Float32Array([0]),            [1]),
+      point_coords:   new ortRuntime.Tensor('float32', new Float32Array([sx, sy, 0, 0]), [1, 2, 2]),
+      point_labels:   new ortRuntime.Tensor('float32', new Float32Array([1, -1]),        [1, 2]),
+      mask_input:     new ortRuntime.Tensor('float32', new Float32Array(MASK_LOWRES * MASK_LOWRES), [1, 1, MASK_LOWRES, MASK_LOWRES]),
+      has_mask_input: new ortRuntime.Tensor('float32', new Float32Array([0]),            [1]),
     };
 
     const result = await this.decoderSession.run(feeds);
@@ -205,6 +210,38 @@ export class SAM2 {
     const fullMask = upsampleAndCrop(rawMask, scale, padX, padY, origW, origH);
 
     return { mask: fullMask, iou: bestIou };
+  }
+}
+
+async function ensureOnnxRuntime() {
+  if (ortRuntime) return ortRuntime;
+  if (ortLoadPromise) return ortLoadPromise;
+  if (typeof document === 'undefined') {
+    throw new Error('ONNX Runtime Web can only be loaded in a browser');
+  }
+
+  ortLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `${ORT_BASE}ort.all.min.js`;
+    script.async = true;
+    script.onload = () => {
+      ortRuntime = globalThis.ort ?? null;
+      if (!ortRuntime) {
+        reject(new Error('ONNX Runtime Web loaded without exposing its runtime'));
+        return;
+      }
+      ortRuntime.env.wasm.wasmPaths = ORT_BASE;
+      resolve(ortRuntime);
+    };
+    script.onerror = () => reject(new Error('Failed to load ONNX Runtime Web'));
+    document.head.appendChild(script);
+  });
+
+  try {
+    return await ortLoadPromise;
+  } catch (error) {
+    ortLoadPromise = null;
+    throw error;
   }
 }
 
@@ -275,7 +312,7 @@ function preprocessImage(imgEl) {
   }
 
   return {
-    tensor: new ort.Tensor('float32', tensor, [1, 3, SAM2_SIZE, SAM2_SIZE]),
+    tensor: new ortRuntime.Tensor('float32', tensor, [1, 3, SAM2_SIZE, SAM2_SIZE]),
     scale, padX, padY, origW, origH,
   };
 }

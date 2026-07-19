@@ -44,7 +44,7 @@ MODEL_URLS = {
 MODEL_FAMILIES = {
   **{model: "sam2" for model in SAM2_MODEL_URLS},
   **{model: "mobile-sam" for model in MOBILE_SAM_MODEL_URLS},
-  "cellsam": "cellsam",
+  "cellpose-cpsam-v2": "cellpose",
 }
 
 MODEL_KEYS = list(MODEL_FAMILIES.keys())
@@ -55,7 +55,7 @@ MODEL_LABELS = {
   "base-plus": "SAM2.1-Base+",
   "large": "SAM2.1-Large",
   "mobile-sam": "MobileSAM",
-  "cellsam": "CellSAM",
+  "cellpose-cpsam-v2": "Cellpose-SAM v2",
 }
 
 SAM2_SIZE = 1024
@@ -76,21 +76,34 @@ class Sam2OnnxSegmenter:
     default_cache = Path.home() / ".cache" / "cellsam-local" / "models"
     self.cache_dir = Path(cache_dir or os.getenv("CELLSAM_MODEL_CACHE", default_cache))
     self.sessions: dict[str, ModelSessions] = {}
-    self._cellsam = None
+    self._cellpose = None
     self._ort = None
     self._np = None
     self._image_cls = None
 
   def health(self) -> dict:
-    ort, _, _ = self._deps()
-    providers = ort.get_available_providers()
-    provider = _preferred_providers(providers)[0]
+    onnx = self._onnx_health()
+    cellpose = _cellpose_health()
+    available_models = []
+    providers = {}
+
+    if onnx["available"]:
+      available_models.extend(MODEL_URLS.keys())
+      providers["onnx"] = onnx.get("provider")
+    if cellpose["available"]:
+      available_models.extend(cellpose.get("models", []))
+      providers["cellpose"] = cellpose.get("provider")
+
     return {
-      "provider": provider,
-      "availableProviders": providers,
-      "models": MODEL_KEYS,
+      "ready": bool(available_models),
+      "provider": providers.get("onnx") or providers.get("cellpose"),
+      "providers": providers,
+      "availableProviders": onnx.get("availableProviders", []),
+      "models": available_models,
+      "supportedModels": MODEL_KEYS,
+      "onnx": onnx,
       "experimentalModels": {
-        "cellsam": _cellsam_health(),
+        "cellpose": cellpose,
       },
     }
 
@@ -99,8 +112,8 @@ class Sam2OnnxSegmenter:
       raise ValueError("Uploaded image is empty")
 
     family = MODEL_FAMILIES.get(model)
-    if family == "cellsam":
-      return self._segment_cellsam_image_bytes(content)
+    if family == "cellpose":
+      return self._segment_cellpose_image_bytes(content, model)
     if family is None:
       raise ValueError(f"Unknown model: {model}")
 
@@ -149,11 +162,11 @@ class Sam2OnnxSegmenter:
       "provider": sessions.provider,
     }
 
-  def _segment_cellsam_image_bytes(self, content: bytes) -> dict:
-    if self._cellsam is None:
-      from .cellsam_backend import CellSamBackend
-      self._cellsam = CellSamBackend()
-    return self._cellsam.segment_image_bytes(content)
+  def _segment_cellpose_image_bytes(self, content: bytes, model: str) -> dict:
+    if self._cellpose is None:
+      from .cellpose_backend import CellposeBackend
+      self._cellpose = CellposeBackend()
+    return self._cellpose.segment_image_bytes(content, model)
 
   def _deps(self):
     if self._ort is not None:
@@ -173,6 +186,24 @@ class Sam2OnnxSegmenter:
     self._np = np
     self._image_cls = Image
     return self._ort, self._np, self._image_cls
+
+  def _onnx_health(self) -> dict:
+    try:
+      ort, _, _ = self._deps()
+    except RuntimeError as exc:
+      return {
+        "available": False,
+        "provider": None,
+        "availableProviders": [],
+        "error": str(exc),
+      }
+
+    providers = ort.get_available_providers()
+    return {
+      "available": True,
+      "provider": _preferred_providers(providers)[0],
+      "availableProviders": providers,
+    }
 
   def _load_model(self, model: str, ort) -> ModelSessions:
     if model in self.sessions:
@@ -306,16 +337,19 @@ def _preferred_providers(available: list[str]) -> list[str]:
   return ["CPUExecutionProvider"]
 
 
-def _cellsam_health() -> dict:
+def _cellpose_health() -> dict:
   try:
-    from .cellsam_backend import cellsam_health
+    from .cellpose_backend import cellpose_health
   except Exception as exc:
     return {
       "available": False,
       "error": str(exc),
-      "license": "CellSAM code is Apache-2.0; official weights are non-commercial academic use only.",
+      "license": (
+        "Cellpose code and mouseland/cellpose-sam model card are BSD-3-Clause; "
+        "upstream README notes CC-BY-NC training data."
+      ),
     }
-  return cellsam_health()
+  return cellpose_health()
 
 
 def _download_atomic(url: str, dest: Path):

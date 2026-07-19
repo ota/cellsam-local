@@ -30,6 +30,17 @@ export async function detectServerBackend() {
   }
 }
 
+export function getAvailableServerModels(info) {
+  if (!Array.isArray(info?.models)) return [];
+  return [...new Set(info.models.filter(model => typeof model === 'string' && model.length > 0))];
+}
+
+export function getServerModelProvider(info, model) {
+  const experimental = Object.values(info?.experimentalModels ?? {});
+  const backend = experimental.find(item => Array.isArray(item?.models) && item.models.includes(model));
+  return backend?.provider ?? info?.provider ?? 'remote';
+}
+
 export async function segmentOnServer(imgEl, opts = {}, onProgress = null, cancelToken = null) {
   const {
     modelType = 'tiny',
@@ -77,7 +88,7 @@ export async function segmentOnServer(imgEl, opts = {}, onProgress = null, cance
 
     return {
       rawMasks,
-      modelName: data.modelName ?? data.model_name ?? `SAM2.1-${modelType} (server)`,
+      modelName: data.modelName ?? data.model_name ?? `${modelType} (server)`,
     };
   } catch (err) {
     if (err?.name === 'AbortError' || cancelToken?.cancelled) return null;

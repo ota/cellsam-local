@@ -1,7 +1,36 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decodeServerMasks } from '../js/server_api.js';
+import {
+  decodeServerMasks,
+  getAvailableServerModels,
+  getServerModelProvider,
+} from '../js/server_api.js';
+
+describe('server model metadata', () => {
+  test('available model keys are normalized and deduplicated', () => {
+    assert.deepEqual(
+      getAvailableServerModels({ models: ['tiny', 'cellpose-cpsam-v2', 'tiny', null] }),
+      ['tiny', 'cellpose-cpsam-v2'],
+    );
+    assert.deepEqual(getAvailableServerModels({}), []);
+  });
+
+  test('experimental backend provider is used for its models', () => {
+    const info = {
+      provider: 'CUDAExecutionProvider',
+      experimentalModels: {
+        cellpose: {
+          models: ['cellpose-cpsam-v2'],
+          provider: 'PyTorch CUDA',
+        },
+      },
+    };
+
+    assert.equal(getServerModelProvider(info, 'cellpose-cpsam-v2'), 'PyTorch CUDA');
+    assert.equal(getServerModelProvider(info, 'tiny'), 'CUDAExecutionProvider');
+  });
+});
 
 describe('decodeServerMasks', () => {
   test('start-length RLE masks are decoded into Uint8Array masks', () => {

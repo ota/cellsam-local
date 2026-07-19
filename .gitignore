@@ -4,8 +4,12 @@ assets/validation/
 # Local benchmark and validation outputs.
 reports/
 
+# Local optional model caches.
+.cache/
+
 # Local Python environment for server mode.
 .venv/
+.venv-cellpose/
 __pycache__/
 *.py[cod]
 

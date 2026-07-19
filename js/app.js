@@ -13,7 +13,12 @@
 
 import { SAM2 }                           from './sam2.js';
 import { decodeMasks, applyPostFilters }  from './automask.js';
-import { detectServerBackend, segmentOnServer } from './server_api.js';
+import {
+  detectServerBackend,
+  getAvailableServerModels,
+  getServerModelProvider,
+  segmentOnServer,
+} from './server_api.js';
 import {
   DetectedObject,
   DetectionResult,
@@ -50,10 +55,12 @@ const summaryText      = $('summary-text');
 const modelStatus      = $('model-status');
 const gpuStatus        = $('gpu-status');
 const restoreBtn       = $('restore-btn');
+const modelOptions     = $('model-options');
 
 // 検出設定
 const pointsPerSideSlider = $('points-per-side');
 const pointsPerSideVal    = $('points-per-side-val');
+const pointsPerSideField  = $('points-per-side-field');
 const iouThreshSlider     = $('iou-thresh');
 const iouThreshVal        = $('iou-thresh-val');
 const minMaskAreaSlider   = $('min-mask-area');
@@ -85,11 +92,13 @@ const filterVals = {
   if (server.available) {
     inferenceBackend = 'server';
     serverInfo = server.info;
+    configureModelOptions();
     const provider = serverInfo.provider ?? 'server';
     gpuStatus.textContent = provider.includes('CUDA') ? 'サーバ GPU' : 'サーバ推論';
     gpuStatus.className = 'status-badge server';
-    modelStatus.textContent = `サーバ推論モード (${provider})`;
+    updateModelControls();
   } else {
+    configureModelOptions();
     const provider = await sam2.detectExecutionProvider();
     gpuStatus.textContent = provider === 'webgpu' ? 'WebGPU 有効' : 'WASM (CPU)';
     gpuStatus.className = `status-badge ${provider}`;
@@ -101,6 +110,48 @@ const filterVals = {
   // サンプル画像をデフォルトでロード
   loadImageFromUrl('./assets/sample.png');
 })();
+
+modelOptions.addEventListener('change', event => {
+  if (event.target.matches('input[name="model"]')) updateModelControls();
+});
+
+function configureModelOptions() {
+  const availableModels = new Set(getAvailableServerModels(serverInfo));
+  const labels = [...modelOptions.querySelectorAll('[data-model-key]')];
+
+  for (const label of labels) {
+    const serverOnly = label.dataset.serverOnly === 'true';
+    label.hidden = inferenceBackend === 'server'
+      ? !availableModels.has(label.dataset.modelKey)
+      : serverOnly;
+  }
+
+  const selected = modelOptions.querySelector('input[name="model"]:checked');
+  if (!selected || selected.closest('.radio-label').hidden) {
+    const firstAvailable = labels.find(label => !label.hidden)?.querySelector('input[name="model"]');
+    if (firstAvailable) firstAvailable.checked = true;
+  }
+}
+
+function updateModelControls() {
+  const modelType = selectedModelType();
+  if (!modelType) return;
+
+  pointsPerSideField.hidden = modelType === 'cellpose-cpsam-v2';
+  if (inferenceBackend === 'server') {
+    const provider = getServerModelProvider(serverInfo, modelType);
+    modelStatus.textContent = `${modelDisplayName(modelType)} / サーバ推論 (${provider})`;
+  }
+}
+
+function selectedModelType() {
+  return modelOptions.querySelector('input[name="model"]:checked')?.value ?? null;
+}
+
+function modelDisplayName(modelType) {
+  const label = modelOptions.querySelector(`[data-model-key="${modelType}"] strong`);
+  return label?.textContent ?? modelType;
+}
 
 // ---- 画像アップロード ----
 uploadArea.addEventListener('click', () => fileInput.click());
@@ -175,7 +226,8 @@ linkSlider(contourWidthSlider, contourWidthVal, { onChange: () => render() });
 runBtn.addEventListener('click', async () => {
   if (!inputPreview.src || inputPreview.hidden) return;
 
-  const modelType = document.querySelector('input[name="model"]:checked').value;
+  const modelType = selectedModelType();
+  if (!modelType) return;
 
   // 必要ならモデルをロード
   if (inferenceBackend === 'local' && (sam2.currentModel !== modelType || !sam2.encoderSession)) {
@@ -185,7 +237,7 @@ runBtn.addEventListener('click', async () => {
       await sam2.load(modelType, ({ message }) => {
         modelStatus.textContent = message;
       });
-      modelStatus.textContent = `SAM2.1-${modelType} 準備完了 (${sam2.executionProvider})`;
+      modelStatus.textContent = `${modelDisplayName(modelType)} 準備完了 (${sam2.executionProvider})`;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('Model load error:', err);
@@ -194,7 +246,8 @@ runBtn.addEventListener('click', async () => {
       return;
     }
   } else if (inferenceBackend === 'server') {
-    modelStatus.textContent = `サーバ推論モード (${serverInfo?.provider ?? 'remote'})`;
+    const provider = getServerModelProvider(serverInfo, modelType);
+    modelStatus.textContent = `${modelDisplayName(modelType)} / サーバ推論 (${provider})`;
   }
 
   // 状態リセット
@@ -234,7 +287,7 @@ runBtn.addEventListener('click', async () => {
         updateProgress,
         cancelToken,
       );
-      currentModelName = `SAM2.1-${modelType}`;
+      currentModelName = modelDisplayName(modelType);
     }
 
     if (decoded === null) {
@@ -316,8 +369,8 @@ outputCanvas.addEventListener('click', e => {
 async function rebuildFromRawMasks() {
   if (!rawMasks) return;
 
-  const modelType = document.querySelector('input[name="model"]:checked').value;
-  const modelName = currentModelName || `SAM2.1-${modelType}`;
+  const modelType = selectedModelType();
+  const modelName = currentModelName || modelDisplayName(modelType);
   const filtered  = applyPostFilters(rawMasks, {
     predIouThresh: parseFloat(iouThreshSlider.value),
     nmsThresh:     0.70,

@@ -73,7 +73,7 @@ ONNX 版 SAM 2.1 モデルを使用します。
 | モデルキー | 出典 | 目安サイズ | ライセンス注記 | 状態 |
 | --- | --- | ---: | --- | --- |
 | `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | モデルカードでは Apache-2.0 と記載されています。MobileSAM の ViT-T エンコーダと SAM マスクデコーダの ONNX バンドルです。 | サーバ側ベンチマーク/API 候補。ブラウザ UI にはまだ表示していません |
-| `cellsam` | [`vanvalenlab/cellSAM`](https://github.com/vanvalenlab/cellSAM) | CellSAM がダウンロード | コードは Apache-2.0。公式重みは DeepCell access が必要で、非商用 academic 用途に限定されています。 | 任意のサーバ専用 backend |
+| `cellpose-cpsam-v2` | [Cellpose](https://cellpose.readthedocs.io/en/latest/models.html), [`mouseland/cellpose-sam`](https://huggingface.co/mouseland/cellpose-sam) | 初回約 1.2 GB | Cellpose のコードとモデルカードは BSD-3-Clause です。上流 README には学習データが CC-BY-NC と記載されています。DeepCell のようなアカウント token は不要です。 | 任意のサーバ専用の研究・評価 backend。利用可能な場合は UI に表示されます |
 
 採用済みモデルのライセンス注記:
 
@@ -81,8 +81,9 @@ ONNX 版 SAM 2.1 モデルを使用します。
   ライセンスは Apache-2.0 と記載されています。
 - 実験的に追加した MobileSAM ONNX バンドルも、Hugging Face のモデルカードでは
   Apache-2.0 と記載されています。
-- CellSAM は任意 backend です。公式の事前学習済み重みには DeepCell の
-  `DEEPCELL_ACCESS_TOKEN`、またはローカル重みを指す `CELLSAM_MODEL_PATH` が必要です。
+- 任意の Cellpose backend は、PyTorch と Cellpose の依存関係が増えるため
+  サーバ専用にしています。Cellpose はユーザー登録や API token を要求しませんが、
+  上流の学習データ条件が用途に合うと確認できるまでは研究・評価向けとして扱います。
 - これらは Meta SAM 2.1 モデルからの変換版なので、利用目的に応じて上流の
   [SAM 2 リポジトリ](https://github.com/facebookresearch/sam2) とモデル利用条件も
   確認してください。
@@ -114,8 +115,7 @@ LAN GPU サーバモード:
 - GPU 高速化には NVIDIA CUDA 対応の ONNX Runtime 環境
 - `server/requirements.txt` の依存パッケージ
 - 初回モデルダウンロードのための、サーバ側のネットワーク接続
-- 任意の CellSAM backend を使う場合は `server/requirements-cellsam.txt` の依存関係と、
-  公式 CellSAM 重み用の `DEEPCELL_ACCESS_TOKEN`
+- 任意の Cellpose backend を使う場合は `server/requirements-cellpose.txt` の依存関係
 
 このアプリは ES modules を使うため、`file://` で `index.html` を直接開く方法では
 安定して動作しません。HTTP サーバー経由で配信してください。
@@ -166,17 +166,29 @@ ONNX ファイルがサーバ上の `~/.cache/cellsam-local/models` にダウン
 | `GET /api/health` | サーバモード、依存関係の準備状態、推論 provider、利用可能モデルを返します |
 | `POST /api/segment` | 画像、モデル名、`points_per_side` を受け取り、RLE 形式の生マスクを返します |
 
-任意の CellSAM backend のセットアップ:
+任意の Cellpose backend のセットアップ:
 
 ```bash
-uv pip install --python .venv/bin/python -r server/requirements-cellsam.txt
-export DEEPCELL_ACCESS_TOKEN=<token-from-users.deepcell.org>
-npm run benchmark:server -- --models cellsam --limit 1 --write-overlays
+uv venv .venv-cellpose
+uv pip install --python .venv-cellpose/bin/python -r server/requirements-cellpose.txt
+npm run benchmark:cellpose -- --limit 1 --write-overlays
 ```
 
-互換性のある重みをローカルに持っている場合は、`DEEPCELL_ACCESS_TOKEN` の代わりに
-`CELLSAM_MODEL_PATH=/path/to/weights` を指定できます。CellSAM は独自の cell-finding
-pipeline を使ってラベル付きインスタンスを返すため、`points_per_side` は無視されます。
+Cellpose は初回利用時に、ユーザー登録なしで built-in 事前学習済みモデルを
+ダウンロードします。Cellpose/PyTorch と ONNX Runtime GPU は同じ venv 内で
+互換性のない CUDA wheel 群を入れることがあるため、Cellpose は `.venv-cellpose`
+に分けます。付属の npm scripts から実行する場合、Cellpose のモデルファイルは
+デフォルトで `.cache/cellpose/models` に保存されます。Cellpose は独自の細胞
+セグメンテーション pipeline を使ってラベル付きインスタンスを返すため、
+`points_per_side` は無視されます。LAN サーバは次のコマンドで起動します。
+
+```bash
+npm run serve:gpu:cellpose
+```
+
+ブラウザ UI は `/api/health` を読み、そのサーバ環境で実際に利用可能なモデルだけを
+表示します。Cellpose-SAM v2 は自動的にモデル選択へ追加されます。LAN 内の別 PC
+からは `http://<server-ip>:8080` を開きます。
 
 ## 基本的な使い方
 
@@ -269,10 +281,10 @@ JSON レポートを `reports/` に書き出します。どちらのディレク
 │   ├── app.py              # LAN 配信用 FastAPI UI/API サーバ
 │   ├── run_gpu_python.sh   # GPU 用 Python 環境の共通起動ヘルパー
 │   ├── run_gpu_server.sh   # LAN サーバ起動スクリプト
-│   ├── cellsam_backend.py  # 任意の CellSAM サーバ専用 backend
+│   ├── cellpose_backend.py # 任意の Cellpose サーバ専用 backend
 │   ├── segmenter.py        # サーバ側 SAM 2.1 ONNX Runtime 推論
 │   ├── requirements.txt    # GPU サーバ用 Python 依存パッケージ
-│   └── requirements-cellsam.txt # 任意の CellSAM 依存パッケージ
+│   └── requirements-cellpose.txt # 任意の Cellpose 依存パッケージ
 ├── scripts/
 │   └── benchmark_models.py # サーバモデルのベンチマーク
 ├── assets/

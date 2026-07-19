@@ -31,33 +31,40 @@
 
         <section class="section">
           <h2>モデル選択</h2>
-          <div class="radio-group">
-            <label class="radio-label">
+          <div class="radio-group" id="model-options">
+            <label class="radio-label" data-model-key="tiny">
               <input type="radio" name="model" value="tiny" checked>
               <span>
                 <strong>SAM2.1-Tiny</strong>
                 <small>軽量・高速 (~155 MB) — CPU/GPU どちらでも動作</small>
               </span>
             </label>
-            <label class="radio-label">
+            <label class="radio-label" data-model-key="small">
               <input type="radio" name="model" value="small">
               <span>
                 <strong>SAM2.1-Small</strong>
                 <small>バランス (~184 MB) — GPU 推奨</small>
               </span>
             </label>
-            <label class="radio-label">
+            <label class="radio-label" data-model-key="base-plus">
               <input type="radio" name="model" value="base-plus">
               <span>
                 <strong>SAM2.1-Base+</strong>
                 <small>高精度 (~667 MB) — NVIDIA/Apple GPU 推奨</small>
               </span>
             </label>
-            <label class="radio-label">
+            <label class="radio-label" data-model-key="large">
               <input type="radio" name="model" value="large">
               <span>
                 <strong>SAM2.1-Large</strong>
                 <small>最高精度 (~910 MB) — 強力な GPU 必須</small>
+              </span>
+            </label>
+            <label class="radio-label" data-model-key="cellpose-cpsam-v2" data-server-only="true" hidden>
+              <input type="radio" name="model" value="cellpose-cpsam-v2">
+              <span>
+                <strong>Cellpose-SAM v2</strong>
+                <small>細胞特化・研究評価向け (~1.2 GB) — サーバ GPU 専用</small>
               </span>
             </label>
           </div>
@@ -66,7 +73,7 @@
 
         <section class="section">
           <h2>検出設定</h2>
-          <div class="field">
+          <div class="field" id="points-per-side-field">
             <label>グリッド密度 (points/side)</label>
             <div class="range-row">
               <input type="range" id="points-per-side" min="8" max="32" step="4" value="16">
@@ -175,14 +182,6 @@
     </main>
   </div>
 
-  <!--
-    ONNX Runtime Web (all backends bundle: WASM + WebGPU)
-    SharpAI モデルは ORT 1.19 向けビルドのため 1.19.2 を使用
-  -->
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.all.min.js"></script>
-  <script>
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/';
-  </script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
