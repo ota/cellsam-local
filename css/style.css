@@ -34,6 +34,7 @@ header p  { font-size: 0.8rem; color: #666; flex: 1; }
 }
 .status-badge.webgpu { background: #1a3a1a; color: #4caf50; }
 .status-badge.wasm   { background: #3a2a10; color: #ff9800; }
+.status-badge.server { background: #15333a; color: #67d9ee; }
 
 /* ---- Layout ---- */
 .main-layout {

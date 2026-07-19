@@ -1,0 +1,10 @@
+# Local validation images are kept out of git.
+assets/validation/
+
+# Local Python environment for server mode.
+.venv/
+__pycache__/
+*.py[cod]
+
+# Windows attachment metadata copied from downloaded files.
+*:Zone.Identifier

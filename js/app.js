@@ -13,6 +13,7 @@
 
 import { SAM2 }                           from './sam2.js';
 import { decodeMasks, applyPostFilters }  from './automask.js';
+import { detectServerBackend, segmentOnServer } from './server_api.js';
 import {
   DetectedObject,
   DetectionResult,
@@ -25,6 +26,9 @@ import { drawResults, COLORS } from './visualize.js';
 const sam2             = new SAM2();
 let   currentResult    = null;    // DetectionResult | null
 let   rawMasks         = null;    // decodeMasks() の生結果 (再フィルタ用)
+let   currentModelName = '';
+let   inferenceBackend = 'local'; // 'local' | 'server'
+let   serverInfo       = null;
 let   manuallyExcluded = new Set();
 let   cancelToken      = null;
 const objectNotes      = new Map(); // objId → note文字列 (再構築をまたいで保持)
@@ -77,9 +81,22 @@ const filterVals = {
 
 // ---- 初期化 ----
 (async () => {
-  const provider = await sam2.detectExecutionProvider();
-  gpuStatus.textContent = provider === 'webgpu' ? 'WebGPU 有効' : 'WASM (CPU)';
-  gpuStatus.className = `status-badge ${provider}`;
+  const server = await detectServerBackend();
+  if (server.available) {
+    inferenceBackend = 'server';
+    serverInfo = server.info;
+    const provider = serverInfo.provider ?? 'server';
+    gpuStatus.textContent = provider.includes('CUDA') ? 'サーバ GPU' : 'サーバ推論';
+    gpuStatus.className = 'status-badge server';
+    modelStatus.textContent = `サーバ推論モード (${provider})`;
+  } else {
+    const provider = await sam2.detectExecutionProvider();
+    gpuStatus.textContent = provider === 'webgpu' ? 'WebGPU 有効' : 'WASM (CPU)';
+    gpuStatus.className = `status-badge ${provider}`;
+    if (server.info?.mode === 'server' && server.info.ready === false) {
+      modelStatus.textContent = `サーバ推論は未準備: ${server.info.error ?? '依存関係を確認してください'}`;
+    }
+  }
 
   // サンプル画像をデフォルトでロード
   loadImageFromUrl('./assets/sample.png');
@@ -116,6 +133,7 @@ function loadImageFromUrl(url) {
 function resetResult() {
   currentResult    = null;
   rawMasks         = null;
+  currentModelName = '';
   manuallyExcluded = new Set();
   objectNotes.clear();
   outputCanvas.style.display = 'none';
@@ -160,7 +178,7 @@ runBtn.addEventListener('click', async () => {
   const modelType = document.querySelector('input[name="model"]:checked').value;
 
   // 必要ならモデルをロード
-  if (sam2.currentModel !== modelType || !sam2.encoderSession) {
+  if (inferenceBackend === 'local' && (sam2.currentModel !== modelType || !sam2.encoderSession)) {
     runBtn.disabled = true;
     modelStatus.textContent = 'モデルをダウンロード中...';
     try {
@@ -175,12 +193,15 @@ runBtn.addEventListener('click', async () => {
       runBtn.disabled = false;
       return;
     }
+  } else if (inferenceBackend === 'server') {
+    modelStatus.textContent = `サーバ推論モード (${serverInfo?.provider ?? 'remote'})`;
   }
 
   // 状態リセット
   cancelToken      = { cancelled: false };
   manuallyExcluded = new Set();
   currentResult    = null;
+  currentModelName = '';
 
   runBtn.disabled           = true;
   progressArea.hidden       = false;
@@ -193,16 +214,28 @@ runBtn.addEventListener('click', async () => {
   };
 
   try {
-    const decoded = await decodeMasks(
-      sam2,
-      inputPreview,
-      decodeOpts,
-      ({ done, total, message }) => {
-        progressText.textContent = message;
-        if (total > 0) progressFill.style.width = `${(done / total) * 100}%`;
-      },
-      cancelToken,
-    );
+    let decoded = null;
+    if (inferenceBackend === 'server') {
+      const serverResult = await segmentOnServer(
+        inputPreview,
+        { modelType, pointsPerSide: decodeOpts.pointsPerSide },
+        updateProgress,
+        cancelToken,
+      );
+      if (serverResult !== null) {
+        decoded = serverResult.rawMasks;
+        currentModelName = serverResult.modelName;
+      }
+    } else {
+      decoded = await decodeMasks(
+        sam2,
+        inputPreview,
+        decodeOpts,
+        updateProgress,
+        cancelToken,
+      );
+      currentModelName = `SAM2.1-${modelType}`;
+    }
 
     if (decoded === null) {
       progressText.textContent = 'キャンセルされました';
@@ -284,6 +317,7 @@ async function rebuildFromRawMasks() {
   if (!rawMasks) return;
 
   const modelType = document.querySelector('input[name="model"]:checked').value;
+  const modelName = currentModelName || `SAM2.1-${modelType}`;
   const filtered  = applyPostFilters(rawMasks, {
     predIouThresh: parseFloat(iouThreshSlider.value),
     nmsThresh:     0.70,
@@ -317,7 +351,7 @@ async function rebuildFromRawMasks() {
   currentResult = new DetectionResult({
     objects,
     imageData,
-    modelName: `SAM2.1-${modelType}`,
+    modelName,
   });
 
   manuallyExcluded = new Set();
@@ -494,6 +528,11 @@ function getImageData(imgEl) {
 
 function yieldToUI() {
   return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function updateProgress({ done, total, message }) {
+  progressText.textContent = message;
+  if (total > 0) progressFill.style.width = `${(done / total) * 100}%`;
 }
 
 function debounce(fn, ms) {

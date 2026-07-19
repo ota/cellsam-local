@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+numpy>=1.26
+pillow>=10
+# For a CPU-only server, replace this with onnxruntime.
+# The upper bound keeps the wheel stack on CUDA 12, which is broadly available
+# and works with newer NVIDIA drivers through driver backward compatibility.
+onnxruntime-gpu[cuda,cudnn]>=1.22,<1.27
