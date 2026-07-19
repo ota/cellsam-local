@@ -223,11 +223,14 @@ npm run test:watch
 ```bash
 npm run benchmark:server -- --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2
+npm run benchmark:server -- --models tiny mobile-sam --limit 2 --write-overlays
 ```
 
 ベンチマークは `assets/validation/` の画像を読み、サーバ用セグメンターを直接実行し、
 JSON レポートを `reports/` に書き出します。どちらのディレクトリも git では無視されるため、
 検証用入力と出力をコミット対象から分けて扱えます。
+`--write-overlays` を付けると、採用されたマスクを重ねた確認用 PNG を
+`reports/overlays/` に出力します。
 
 ## プロジェクト構成
 

@@ -225,11 +225,14 @@ For server-side validation on local, ignored images:
 ```bash
 npm run benchmark:server -- --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2
+npm run benchmark:server -- --models tiny mobile-sam --limit 2 --write-overlays
 ```
 
 The benchmark reads images from `assets/validation/`, runs the server
 segmenter directly, and writes JSON reports under `reports/`. Both directories
 are ignored by git so validation inputs and outputs stay separate from commits.
+With `--write-overlays`, preview PNGs with kept masks are written under
+`reports/overlays/`.
 
 ## Project Structure
 

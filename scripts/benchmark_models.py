@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import sys
 import time
@@ -73,6 +74,23 @@ def parse_args() -> argparse.Namespace:
     default=None,
     help="JSON output path. Default: reports/benchmark-<timestamp>.json",
   )
+  parser.add_argument(
+    "--write-overlays",
+    action="store_true",
+    help="Write PNG previews with kept masks overlaid under reports/overlays.",
+  )
+  parser.add_argument(
+    "--overlay-dir",
+    type=Path,
+    default=None,
+    help="Overlay output directory. Default: reports/overlays/<benchmark-name>",
+  )
+  parser.add_argument(
+    "--overlay-max-edge",
+    type=int,
+    default=1600,
+    help="Maximum width or height for overlay preview PNGs.",
+  )
   return parser.parse_args()
 
 
@@ -95,6 +113,9 @@ def main() -> int:
 
   started_at = datetime.now(timezone.utc)
   output_path = args.output or ROOT / "reports" / f"benchmark-{started_at:%Y%m%d-%H%M%S}.json"
+  overlay_dir = None
+  if args.write_overlays:
+    overlay_dir = args.overlay_dir or ROOT / "reports" / "overlays" / output_path.stem
 
   segmenter = Sam2OnnxSegmenter()
   health = safe_health(segmenter)
@@ -102,7 +123,7 @@ def main() -> int:
 
   for model in args.models:
     for image_path in images:
-      records.append(run_one(segmenter, model, image_path, args))
+      records.append(run_one(segmenter, model, image_path, args, overlay_dir))
 
   payload = {
     "generatedAt": started_at.isoformat(),
@@ -114,6 +135,9 @@ def main() -> int:
       "nmsThresh": args.nms_thresh,
       "minMaskArea": args.min_mask_area,
       "maxMaskRatio": args.max_mask_ratio,
+      "writeOverlays": args.write_overlays,
+      "overlayDir": str(overlay_dir) if overlay_dir else None,
+      "overlayMaxEdge": args.overlay_max_edge,
     },
     "environment": {
       "python": sys.version.split()[0],
@@ -148,7 +172,13 @@ def discover_images(path: Path) -> list[Path]:
   )
 
 
-def run_one(segmenter: Sam2OnnxSegmenter, model: str, image_path: Path, args: argparse.Namespace) -> dict:
+def run_one(
+  segmenter: Sam2OnnxSegmenter,
+  model: str,
+  image_path: Path,
+  args: argparse.Namespace,
+  overlay_dir: Path | None,
+) -> dict:
   started = time.perf_counter()
   try:
     result = segmenter.segment_image_bytes(
@@ -194,7 +224,7 @@ def run_one(segmenter: Sam2OnnxSegmenter, model: str, image_path: Path, args: ar
   areas = [mask["area"] for mask in masks]
   filtered_areas = [mask["area"] for mask in kept]
 
-  return {
+  record = {
     "ok": True,
     "model": model,
     "modelLabel": MODEL_LABELS.get(model, model),
@@ -211,6 +241,9 @@ def run_one(segmenter: Sam2OnnxSegmenter, model: str, image_path: Path, args: ar
     "rawArea": stats(areas),
     "keptArea": stats(filtered_areas),
   }
+  if overlay_dir is not None:
+    record["overlay"] = str(write_overlay(image_path, model, width, height, kept, overlay_dir, args.overlay_max_edge))
+  return record
 
 
 def rle_area(rle: dict) -> int:
@@ -260,6 +293,91 @@ def nms(masks: list[dict], threshold: float) -> list[dict]:
     if all(span_iou(mask["spans"], kept["spans"]) <= threshold for kept in keep):
       keep.append(mask)
   return keep
+
+
+def write_overlay(
+  image_path: Path,
+  model: str,
+  width: int,
+  height: int,
+  masks: list[dict],
+  output_dir: Path,
+  max_edge: int,
+) -> Path:
+  np, image_cls = overlay_deps()
+
+  image = image_cls.open(image_path).convert("RGB")
+  scale = min(1.0, max_edge / max(width, height)) if max_edge > 0 else 1.0
+  out_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+  if image.size != out_size:
+    image = image.resize(out_size, image_cls.Resampling.BILINEAR)
+  base = image.convert("RGBA")
+
+  for idx, mask in enumerate(masks):
+    mask_arr = mask_from_spans(mask["spans"], width, height, np)
+    if out_size != (width, height):
+      mask_img = image_cls.fromarray((mask_arr * 255).astype("uint8"), mode="L")
+      mask_arr = np.asarray(mask_img.resize(out_size, image_cls.Resampling.NEAREST)) > 0
+
+    color = overlay_color(idx)
+    fill = image_cls.new("RGBA", out_size, color + (0,))
+    fill.putalpha(image_cls.fromarray((mask_arr * 70).astype("uint8"), mode="L"))
+    base = image_cls.alpha_composite(base, fill)
+
+    border_arr = mask_border(mask_arr, np)
+    border = image_cls.new("RGBA", out_size, color + (0,))
+    border.putalpha(image_cls.fromarray((border_arr * 240).astype("uint8"), mode="L"))
+    base = image_cls.alpha_composite(base, border)
+
+  output_dir.mkdir(parents=True, exist_ok=True)
+  output_path = output_dir / f"{safe_stem(image_path)}__{model}.png"
+  base.convert("RGB").save(output_path)
+  return output_path
+
+
+def overlay_deps():
+  try:
+    import numpy as np
+    from PIL import Image
+  except ImportError as exc:
+    raise RuntimeError("Overlay output requires numpy and Pillow from server/requirements.txt") from exc
+  return np, Image
+
+
+def mask_from_spans(spans: list[tuple[int, int]], width: int, height: int, np):
+  mask = np.zeros(width * height, dtype=bool)
+  for start, end in spans:
+    mask[start:end] = True
+  return mask.reshape((height, width))
+
+
+def mask_border(mask, np):
+  eroded = mask.copy()
+  eroded[1:, :] &= mask[:-1, :]
+  eroded[:-1, :] &= mask[1:, :]
+  eroded[:, 1:] &= mask[:, :-1]
+  eroded[:, :-1] &= mask[:, 1:]
+  eroded[0, :] = False
+  eroded[-1, :] = False
+  eroded[:, 0] = False
+  eroded[:, -1] = False
+  return mask & ~eroded
+
+
+def overlay_color(index: int) -> tuple[int, int, int]:
+  colors = [
+    (0, 168, 150),
+    (238, 108, 77),
+    (64, 145, 255),
+    (255, 190, 46),
+    (174, 93, 219),
+    (83, 184, 72),
+  ]
+  return colors[index % len(colors)]
+
+
+def safe_stem(path: Path) -> str:
+  return re.sub(r"[^A-Za-z0-9._-]+", "_", path.stem).strip("_") or "image"
 
 
 def stats(values: list[float | int]) -> dict:
