@@ -10,6 +10,7 @@ reports/
 # Local Python environment for server mode.
 .venv/
 .venv-cellpose/
+.venv-microsam/
 __pycache__/
 *.py[cod]
 

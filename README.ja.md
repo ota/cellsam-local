@@ -20,12 +20,16 @@ UI は日本語です。
 - ONNX Runtime Web による SAM 2.1 自動マスク生成
 - WebGPU による高速化と WASM へのフォールバック
 - LAN 内 GPU サーバで推論するサーバモード
+- スフェロイド・オルガノイド画像向けの任意の well-aware MicroSAM backend
 - ドラッグアンドドロップによる画像読み込み
 - `assets/sample.png` のサンプル画像を同梱
 - プロンプトグリッド密度、IoU しきい値、マスク面積フィルタ、輪郭線幅を調整可能
 - 検出後に明度、面積、信頼度で再推論なしにフィルタリング
 - 出力キャンバス上のマスクをクリックして個別に除外、復元
 - 信頼度、面積、円形度、明度、メモを含むオブジェクト一覧
+- セグメンテーション結果を自己完結型annotation draft JSONとして保存
+- マスク承認、brush/eraser、polygon、undo/redoを備えた人手確認用の独立UI
+- 定量validation向けのground-truth JSONとlabel mask PNG出力
 - ビルド不要の静的フロントエンド
 
 ## 推論モード
@@ -56,6 +60,12 @@ UI は日本語です。
 ONNX Runtime GPU を使います。サーバは RLE 圧縮した生マスクを返し、後段フィルタ、
 描画、クリック除外、メモ、一覧表示は引き続きブラウザ側で処理します。
 
+任意の MicroSAM backend は、多ウェル画像に対して別の処理を行います。ウェルを検出し、
+ウェルごとに顕微鏡画像向けの box と point prompt を 1 組生成して、明視野顕微鏡画像で
+fine-tuning された ViT-B checkpoint により、画像ごとに 1 回 embedding を計算します。
+推論には PyTorch CUDA を使います。
+密な自動 prompt grid を使わないため、ウェル縁の誤検出も抑えられます。
+
 ## モデル
 
 このアプリは、[SharpAI が Hugging Face で公開している](https://huggingface.co/SharpAI)
@@ -74,6 +84,7 @@ ONNX 版 SAM 2.1 モデルを使用します。
 | --- | --- | ---: | --- | --- |
 | `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | モデルカードでは Apache-2.0 と記載されています。MobileSAM の ViT-T エンコーダと SAM マスクデコーダの ONNX バンドルです。 | サーバ側ベンチマーク/API 候補。ブラウザ UI にはまだ表示していません |
 | `cellpose-cpsam-v2` | [Cellpose](https://cellpose.readthedocs.io/en/latest/models.html), [`mouseland/cellpose-sam`](https://huggingface.co/mouseland/cellpose-sam) | 初回約 1.2 GB | Cellpose のコードとモデルカードは BSD-3-Clause です。上流 README には学習データが CC-BY-NC と記載されています。DeepCell のようなアカウント token は不要です。 | 任意のサーバ専用の研究・評価 backend。利用可能な場合は UI に表示されます |
+| `microsam-vit-b-lm` | [micro-sam](https://github.com/computational-cell-analytics/micro-sam), [ViT-B LM checkpoint](https://zenodo.org/records/10524791) | 375 MB / 358 MiB | micro-sam のコードは MIT、checkpoint は CC-BY-4.0、Segment Anything runtime は Apache-2.0 です。アカウントや token は不要です。 | 任意のサーバ専用の研究・評価 backend。利用可能な場合は UI に表示されます |
 
 採用済みモデルのライセンス注記:
 
@@ -84,7 +95,11 @@ ONNX 版 SAM 2.1 モデルを使用します。
 - 任意の Cellpose backend は、PyTorch と Cellpose の依存関係が増えるため
   サーバ専用にしています。Cellpose はユーザー登録や API token を要求しませんが、
   上流の学習データ条件が用途に合うと確認できるまでは研究・評価向けとして扱います。
-- これらは Meta SAM 2.1 モデルからの変換版なので、利用目的に応じて上流の
+- 任意の MicroSAM backend は CC-BY-4.0 の明視野顕微鏡画像用 checkpoint を使います。
+  checkpoint のコピーや改変物を再配布する場合は、適切な帰属表示を維持してください。
+  最小構成の headless 環境では micro-sam の desktop GUI 依存関係を入れず、Meta の
+  Apache-2.0 Segment Anything runtime を利用します。
+- SharpAI のモデルは Meta SAM 2.1 モデルからの変換版なので、利用目的に応じて上流の
   [SAM 2 リポジトリ](https://github.com/facebookresearch/sam2) とモデル利用条件も
   確認してください。
 - 研究用途で利用可能な候補モデルはローカル検証の対象に含めます。ただし、候補を
@@ -116,6 +131,7 @@ LAN GPU サーバモード:
 - `server/requirements.txt` の依存パッケージ
 - 初回モデルダウンロードのための、サーバ側のネットワーク接続
 - 任意の Cellpose backend を使う場合は `server/requirements-cellpose.txt` の依存関係
+- 任意の MicroSAM backend を使う場合は `server/requirements-microsam.txt` の依存関係
 
 このアプリは ES modules を使うため、`file://` で `index.html` を直接開く方法では
 安定して動作しません。HTTP サーバー経由で配信してください。
@@ -190,15 +206,58 @@ npm run serve:gpu:cellpose
 表示します。Cellpose-SAM v2 は自動的にモデル選択へ追加されます。LAN 内の別 PC
 からは `http://<server-ip>:8080` を開きます。
 
+任意の MicroSAM 明視野顕微鏡 backend のセットアップ:
+
+```bash
+uv venv .venv-microsam
+uv pip install --python .venv-microsam/bin/python -r server/requirements-microsam.txt
+npm run benchmark:microsam -- --limit 1 --write-overlays
+npm run serve:gpu:microsam
+```
+
+初回推論時に、公開されている ViT-B LM checkpoint をアカウントや token なしで
+`.cache/microsam/models` へダウンロードします。この backend は多ウェル配置を検出し、
+候補ウェルごとに 1 prompt を与えるため、`points_per_side` は無視されます。UI の
+初期 IoU しきい値はこのモデルに限り `0.70` です。現状の深型ウェル処理は意図的に
+保守的で、中央にある完全なスフェロイドを優先します。そのため、ウェル縁に接する
+薄いオブジェクトや一部だけ見えるオブジェクトは検出されない場合があります。
+個数を定量結果として使う前に、用途別の正解アノテーションで検証・調整してください。
+
 ## 基本的な使い方
 
 1. ブラウザでアプリを開きます。
 2. デフォルトのサンプル画像を使うか、入力エリアをクリックまたはドラッグして画像を読み込みます。
-3. SAM 2.1 モデルを選択します。
+3. 現在の推論モードで利用できるモデルを選択します。
 4. 必要に応じて検出設定を調整します。
 5. `検出実行` をクリックしてセグメンテーションを実行します。
 6. フィルタスライダーで表示するオブジェクトを絞り込みます。
 7. マスクまたは一覧行をクリックして、個別の検出結果を除外、復元します。
+
+## Ground Truth アノテーション
+
+セグメンテーション後、検出設定の`下書きJSON保存`をクリックします。draftには表示画像が
+PNG data URLとして格納され、画像サイズ、Web Cryptoが利用可能な場合のpixel SHA-256、
+モデルと設定、メモ、row-major start-length RLE形式の全マスクが含まれます。表示中の
+マスクは未確認の`candidate`、除外したマスクは`rejected`として保持されます。
+
+headerから`annotate.html`を開き、draft JSONを読み込みます。annotation UIでは次を
+操作できます。
+
+- 既定で有効なblind reviewによる候補の承認・却下
+- オブジェクト選択、brush、eraser、polygon追加、zoom、pan
+- 最大30操作のマスク・状態変更に対するundo/redo
+- オブジェクト別メモと却下マスクの表示切り替え
+- 作業中draft JSON、承認済みground-truth JSON、label mask PNGの出力
+
+全candidateを確認し、空でないオブジェクトを1件以上承認するとground-truthを出力できます。
+承認マスク同士に重なりがある場合は出力を拒否します。JSONでは各オブジェクトを独立した
+RLEマスクとして保持します。PNGでは背景をRGB値`0`、承認オブジェクトを同じRGB channel
+値の`1..255`として順に格納し、対応する`labelValue`をground-truth JSONへ記録します。
+
+ファイルはブラウザのdownloadとして保存され、プロジェクト内へ自動保存されません。
+git対象外にする場合は、確認済みファイルを`assets/validation/annotations/`などの
+ignored directoryへ移動してください。JSONは元画像を内包するため、拡張子がJSONでも
+元画像と同じプライバシー管理が必要です。
 
 ## 低スペック PC 向けの推奨設定
 
@@ -244,8 +303,8 @@ npm run test:watch
 ```
 
 テストは Node.js 組み込みの `node:test` ランナーを使い、検出データモデル、
-派生指標、フィルタリング、クリックによる除外と復元、サーバ応答の RLE マスク復元を
-対象にしています。
+派生指標、フィルタリング、クリックによる除外と復元、サーバ応答のRLEマスク復元、
+annotation RLEのround-trip、annotation document validationを対象にしています。
 
 ローカルの検証画像でサーバ側推論を計測します。
 
@@ -253,6 +312,7 @@ npm run test:watch
 npm run benchmark:server -- --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2 --write-overlays
+npm run benchmark:microsam -- --limit 2 --write-overlays
 ```
 
 ベンチマークは `assets/validation/` の画像を読み、サーバ用セグメンターを直接実行し、
@@ -266,9 +326,13 @@ JSON レポートを `reports/` に書き出します。どちらのディレク
 ```text
 .
 ├── index.html              # 日本語 UI レイアウトと ONNX Runtime Web 読み込み
+├── annotate.html           # 人手によるground-truth確認・マスク編集UI
 ├── css/
-│   └── style.css           # アプリケーションスタイル
+│   ├── style.css           # 検出アプリケーションスタイル
+│   └── annotation.css      # annotation workspaceスタイル
 ├── js/
+│   ├── annotation_app.js   # annotation編集状態、canvas、出力処理
+│   ├── annotations.js      # version付きschema、RLE、validation helper
 │   ├── app.js              # UI 状態、イベント、モデル読み込み、描画フロー
 │   ├── automask.js         # グリッドプロンプト、マスクデコード、後処理、NMS
 │   ├── detection.js        # DetectionResult/DetectedObject と指標計算
@@ -282,14 +346,19 @@ JSON レポートを `reports/` に書き出します。どちらのディレク
 │   ├── run_gpu_python.sh   # GPU 用 Python 環境の共通起動ヘルパー
 │   ├── run_gpu_server.sh   # LAN サーバ起動スクリプト
 │   ├── cellpose_backend.py # 任意の Cellpose サーバ専用 backend
+│   ├── microsam_backend.py # 任意の well-aware MicroSAM backend
+│   ├── well_detection.py   # 多ウェル検出とウェルごとの prompt 生成
+│   ├── image_utils.py      # 共通画像デコードと EXIF orientation 補正
 │   ├── segmenter.py        # サーバ側 SAM 2.1 ONNX Runtime 推論
 │   ├── requirements.txt    # GPU サーバ用 Python 依存パッケージ
-│   └── requirements-cellpose.txt # 任意の Cellpose 依存パッケージ
+│   ├── requirements-cellpose.txt # 任意の Cellpose 依存パッケージ
+│   └── requirements-microsam.txt # 任意の headless MicroSAM 依存パッケージ
 ├── scripts/
 │   └── benchmark_models.py # サーバモデルのベンチマーク
 ├── assets/
 │   └── sample.png          # デフォルトサンプル画像
 ├── test/
+│   ├── annotations.test.js # annotation schemaとRLEのテスト
 │   ├── detection.test.js   # 検出データモデルのテスト
 │   └── server_api.test.js  # サーバ応答デコードのテスト
 └── package.json            # スクリプト定義
@@ -305,8 +374,15 @@ LAN GPU サーバモードでは、画像はこのプロジェクトを実行し
 信頼できる LAN 内で使う想定です。LAN 外へ公開する場合は、認証やアップロード制限を
 追加してください。
 
+annotation draftとground-truth JSONは、別画像ファイルなしで再度開けるよう元画像全体を
+内包します。拡張子が`.json`でも画像データとして取り扱ってください。
+
 ## クレジット
 
 - Meta AI による [SAM 2.1](https://github.com/facebookresearch/sam2)
+- Meta AI による [Segment Anything](https://github.com/facebookresearch/segment-anything)
+- [micro-sam](https://github.com/computational-cell-analytics/micro-sam) と
+  [ViT-B LM checkpoint](https://zenodo.org/records/10524791)
+- [Cellpose](https://github.com/MouseLand/cellpose)
 - [SharpAI](https://huggingface.co/SharpAI) による ONNX モデル変換
 - [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html)

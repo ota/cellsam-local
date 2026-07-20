@@ -19,12 +19,16 @@ The UI is currently Japanese.
 - SAM 2.1 automatic mask generation using ONNX Runtime Web
 - WebGPU acceleration with WASM fallback
 - Optional LAN GPU server mode with same-origin API inference
+- Optional well-aware MicroSAM backend for spheroid and organoid images
 - Drag-and-drop image loading
 - Built-in sample image at `assets/sample.png`
 - Adjustable prompt grid density, IoU threshold, mask size filters, and contour width
 - Post-detection filtering by brightness, area, and confidence without rerunning inference
 - Click-to-exclude and restore individual masks on the output canvas
 - Per-object summary table with confidence, area, circularity, brightness, and notes
+- Self-contained annotation draft JSON export from segmentation results
+- Separate human-review UI with mask approval, brush/eraser, polygon, and undo/redo
+- Ground-truth JSON and label-mask PNG export for quantitative validation
 - Static frontend with no build step
 
 ## Inference Modes
@@ -57,6 +61,12 @@ CUDA is available. The server returns RLE-compressed raw masks, and the browser
 still handles post-filters, display, click exclusion, notes, and the summary
 table.
 
+The optional MicroSAM backend follows a different path for multiwell images. It
+detects wells, creates one microscopy-oriented box and point prompt per well,
+and computes one image embedding with the light-microscopy-fine-tuned ViT-B
+checkpoint through PyTorch CUDA. This avoids the dense automatic prompt grid
+and reduces false positives from well rims.
+
 ## Models
 
 The app uses ONNX SAM 2.1 models hosted by
@@ -75,6 +85,7 @@ Experimental server-side model:
 | --- | --- | ---: | --- | --- |
 | `mobile-sam` | [`Heliosoph/sam-onnx`](https://huggingface.co/Heliosoph/sam-onnx) | 43 MB | Model card lists Apache-2.0. It bundles MobileSAM's ViT-T encoder with a SAM mask decoder. | Server benchmark/API candidate; not yet exposed in the browser UI |
 | `cellpose-cpsam-v2` | [Cellpose](https://cellpose.readthedocs.io/en/latest/models.html), [`mouseland/cellpose-sam`](https://huggingface.co/mouseland/cellpose-sam) | About 1.2 GB on first use | Cellpose code and model card list BSD-3-Clause; upstream README notes CC-BY-NC training data. No DeepCell-style account token is required. | Optional server-only research/evaluation backend; shown in the UI when available |
+| `microsam-vit-b-lm` | [micro-sam](https://github.com/computational-cell-analytics/micro-sam), [ViT-B LM checkpoint](https://zenodo.org/records/10524791) | 375 MB / 358 MiB | micro-sam code is MIT; the checkpoint is CC-BY-4.0; the Segment Anything runtime is Apache-2.0. No account or token is required. | Optional server-only research/evaluation backend; shown in the UI when available |
 
 Adopted model license notes:
 
@@ -86,7 +97,11 @@ Adopted model license notes:
   Cellpose dependencies. Cellpose does not require user registration or an API
   token, but it should stay in the research/evaluation lane unless its upstream
   training-data terms are acceptable for the intended workflow.
-- These models are converted from Meta SAM 2.1 models, so check the upstream
+- The optional MicroSAM backend uses the CC-BY-4.0 light-microscopy checkpoint,
+  so redistributed copies or adaptations of the checkpoint must retain
+  appropriate attribution. Its minimal headless environment uses Meta's Apache-2.0
+  Segment Anything runtime rather than micro-sam's desktop GUI dependencies.
+- The SharpAI models are converted from Meta SAM 2.1 models, so check the upstream
   [SAM 2 repository](https://github.com/facebookresearch/sam2) and model terms
   for the intended use.
 - Research-use-compatible candidate models can be benchmarked locally. Before a
@@ -118,6 +133,7 @@ For LAN GPU server mode:
 - Dependencies from `server/requirements.txt`
 - Network access from the server for the initial model download
 - Optional Cellpose backend dependencies from `server/requirements-cellpose.txt`
+- Optional MicroSAM backend dependencies from `server/requirements-microsam.txt`
 
 Because the app uses ES modules, opening `index.html` directly with `file://`
 will not work reliably. Serve the directory over HTTP instead.
@@ -192,15 +208,63 @@ The browser UI reads `/api/health`, lists only models available in that server
 environment, and exposes Cellpose-SAM v2 automatically. Open
 `http://<server-ip>:8080` from another machine on the LAN.
 
+Optional MicroSAM light-microscopy backend setup:
+
+```bash
+uv venv .venv-microsam
+uv pip install --python .venv-microsam/bin/python -r server/requirements-microsam.txt
+npm run benchmark:microsam -- --limit 1 --write-overlays
+npm run serve:gpu:microsam
+```
+
+The first inference downloads the public ViT-B LM checkpoint to
+`.cache/microsam/models` without an account or token. The backend detects the
+multiwell layout and submits one prompt per candidate well, so
+`points_per_side` is ignored. The UI selects an initial IoU threshold of `0.70`
+for this model. Current deep-well handling is intentionally conservative:
+central, complete spheroids are preferred, while faint, partial objects near a
+well edge can be omitted. Validate and tune it against task-specific annotations
+before using the counts as quantitative results.
+
 ## Basic Usage
 
 1. Open the app in the browser.
 2. Use the default sample image or upload an image by clicking or dragging it into the input area.
-3. Select a SAM 2.1 model.
+3. Select one of the models available in the current inference mode.
 4. Adjust detection settings if needed.
 5. Click `検出実行` to run segmentation.
 6. Use the filter sliders to refine the displayed objects.
 7. Click masks or table rows to exclude or restore individual detections.
+
+## Ground Truth Annotation
+
+After segmentation, click `下書きJSON保存` in the detection settings. The draft
+contains the displayed image as a PNG data URL, its dimensions and pixel
+SHA-256 when Web Crypto is available, model provenance, settings, notes, and
+all current masks in row-major start-length RLE. Active masks are exported as
+unreviewed `candidate` objects; excluded masks are retained as `rejected`.
+
+Open `annotate.html` from the header and load the draft JSON. The annotation UI
+provides:
+
+- Candidate approval and rejection with blind review enabled by default
+- Object selection, brush, eraser, polygon addition, zoom, and pan
+- Up to 30 mask/status edit actions through undo and redo
+- Per-object notes and optional display of rejected masks
+- In-progress draft JSON, approved ground-truth JSON, and label-mask PNG export
+
+Ground-truth export is available after every candidate has been reviewed and at
+least one non-empty object is accepted. Export rejects overlapping accepted
+masks. Accepted objects remain separate RLE masks in JSON. In the PNG, the
+background is RGB value `0`, and accepted objects are encoded sequentially as
+equal RGB channel values `1..255`; `labelValue` in the ground-truth JSON records
+the mapping.
+
+Files are downloaded by the browser and are not written to the project
+automatically. Store reviewed files under an ignored directory such as
+`assets/validation/annotations/` when they should remain outside git. Because
+the JSON embeds the source image, treat it with the same privacy controls as the
+original image.
 
 ## Recommended Settings for Low-Spec PCs
 
@@ -247,8 +311,8 @@ npm run test:watch
 ```
 
 The tests use Node's built-in `node:test` runner and cover the detection data
-model, derived metrics, filtering, click-toggle behavior, and server RLE mask
-decoding.
+model, derived metrics, filtering, click-toggle behavior, server RLE mask
+decoding, annotation RLE round-trips, and annotation document validation.
 
 For server-side validation on local, ignored images:
 
@@ -256,6 +320,7 @@ For server-side validation on local, ignored images:
 npm run benchmark:server -- --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2
 npm run benchmark:server -- --models tiny mobile-sam --limit 2 --write-overlays
+npm run benchmark:microsam -- --limit 2 --write-overlays
 ```
 
 The benchmark reads images from `assets/validation/`, runs the server
@@ -269,9 +334,13 @@ With `--write-overlays`, preview PNGs with kept masks are written under
 ```text
 .
 ├── index.html              # Japanese UI layout and ONNX Runtime Web loader
+├── annotate.html           # Human ground-truth review and mask editing UI
 ├── css/
-│   └── style.css           # Application styling
+│   ├── style.css           # Detection application styling
+│   └── annotation.css      # Annotation workspace styling
 ├── js/
+│   ├── annotation_app.js   # Annotation editing state, canvas, and exports
+│   ├── annotations.js      # Versioned schema, RLE, and validation helpers
 │   ├── app.js              # UI state, events, model loading, rendering flow
 │   ├── automask.js         # Grid prompts, mask decoding, post-filters, NMS
 │   ├── detection.js        # DetectionResult/DetectedObject and metrics
@@ -285,14 +354,19 @@ With `--write-overlays`, preview PNGs with kept masks are written under
 │   ├── run_gpu_python.sh   # Shared GPU Python environment launcher
 │   ├── run_gpu_server.sh   # LAN server launcher
 │   ├── cellpose_backend.py # Optional Cellpose server-only backend
+│   ├── microsam_backend.py # Optional well-aware MicroSAM backend
+│   ├── well_detection.py   # Multiwell and per-well prompt detection
+│   ├── image_utils.py      # Shared image decoding and EXIF orientation
 │   ├── segmenter.py        # Server-side SAM 2.1 ONNX Runtime inference
 │   ├── requirements.txt    # GPU server Python dependencies
-│   └── requirements-cellpose.txt # Optional Cellpose dependencies
+│   ├── requirements-cellpose.txt # Optional Cellpose dependencies
+│   └── requirements-microsam.txt # Optional headless MicroSAM dependencies
 ├── scripts/
 │   └── benchmark_models.py # Server model benchmark harness
 ├── assets/
 │   └── sample.png          # Default sample image
 ├── test/
+│   ├── annotations.test.js # Annotation schema and RLE tests
 │   ├── detection.test.js   # Detection model tests
 │   └── server_api.test.js  # Server response decoding tests
 └── package.json            # Scripts
@@ -308,8 +382,16 @@ In LAN GPU server mode, images are sent to the server running this project.
 Use that mode only on a trusted LAN or add authentication and upload limits
 before exposing it beyond the LAN.
 
+Annotation draft and ground-truth JSON files embed the full source image so
+they can be reopened without a separate image file. Handle those JSON files as
+image data, even though their extension is `.json`.
+
 ## Credits
 
 - [SAM 2.1](https://github.com/facebookresearch/sam2) by Meta AI
+- [Segment Anything](https://github.com/facebookresearch/segment-anything) by Meta AI
+- [micro-sam](https://github.com/computational-cell-analytics/micro-sam) and its
+  [ViT-B LM checkpoint](https://zenodo.org/records/10524791)
+- [Cellpose](https://github.com/MouseLand/cellpose)
 - ONNX model conversions from [SharpAI](https://huggingface.co/SharpAI)
 - [ONNX Runtime Web](https://onnxruntime.ai/docs/get-started/with-javascript/web.html)

@@ -23,6 +23,13 @@ header {
 }
 header h1 { font-size: 1.1rem; color: #7c9cf5; white-space: nowrap; }
 header p  { font-size: 0.8rem; color: #666; flex: 1; }
+.header-action {
+  color: #b7c5f5;
+  font-size: 0.82rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.header-action:hover { color: #fff; }
 
 .status-badge {
   font-size: 0.82rem;

@@ -241,6 +241,9 @@ def run_one(
     "rawArea": stats(areas),
     "keptArea": stats(filtered_areas),
   }
+  for key in ("wellCount", "promptCount"):
+    if key in result:
+      record[key] = int(result[key])
   if overlay_dir is not None:
     record["overlay"] = str(write_overlay(image_path, model, width, height, kept, overlay_dir, args.overlay_max_edge))
   return record
@@ -304,9 +307,9 @@ def write_overlay(
   output_dir: Path,
   max_edge: int,
 ) -> Path:
-  np, image_cls = overlay_deps()
+  np, image_cls, image_ops = overlay_deps()
 
-  image = image_cls.open(image_path).convert("RGB")
+  image = image_ops.exif_transpose(image_cls.open(image_path)).convert("RGB")
   scale = min(1.0, max_edge / max(width, height)) if max_edge > 0 else 1.0
   out_size = (max(1, round(width * scale)), max(1, round(height * scale)))
   if image.size != out_size:
@@ -338,10 +341,10 @@ def write_overlay(
 def overlay_deps():
   try:
     import numpy as np
-    from PIL import Image
+    from PIL import Image, ImageOps
   except ImportError as exc:
     raise RuntimeError("Overlay output requires numpy and Pillow from server/requirements.txt") from exc
-  return np, Image
+  return np, Image, ImageOps
 
 
 def mask_from_spans(spans: list[tuple[int, int]], width: int, height: int, np):
@@ -408,6 +411,9 @@ def summarize(records: list[dict]) -> dict:
       "filteredMaskCount": stats([record["filteredMaskCount"] for record in ok_records]),
       "keptMaskCount": stats([record["keptMaskCount"] for record in ok_records]),
     }
+    for key in ("wellCount", "promptCount"):
+      if any(key in record for record in ok_records):
+        summary[model][key] = stats([record[key] for record in ok_records if key in record])
   return summary
 
 

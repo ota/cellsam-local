@@ -11,6 +11,7 @@
     <header>
       <h1>CellSAM Local</h1>
       <p>AIによる細胞画像セグメンテーション - ローカル動作版</p>
+      <a class="header-action" href="annotate.html">アノテーション</a>
       <div id="gpu-status" class="status-badge">確認中...</div>
     </header>
 
@@ -67,6 +68,13 @@
                 <small>細胞特化・研究評価向け (~1.2 GB) — サーバ GPU 専用</small>
               </span>
             </label>
+            <label class="radio-label" data-model-key="microsam-vit-b-lm" data-server-only="true" hidden>
+              <input type="radio" name="model" value="microsam-vit-b-lm">
+              <span>
+                <strong>MicroSAM ViT-B LM</strong>
+                <small>顕微鏡・ウェル認識 (~358 MB) — サーバ GPU 専用</small>
+              </span>
+            </label>
           </div>
           <div id="model-status" class="model-status">モデル未ロード</div>
         </section>
@@ -112,6 +120,7 @@
             </div>
           </div>
           <button id="run-btn" class="btn btn-primary" disabled>検出実行</button>
+          <button id="export-annotation-btn" class="btn btn-secondary" disabled>下書きJSON保存</button>
           <div id="progress-area" class="progress-area" hidden>
             <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
             <div id="progress-text" class="progress-text"></div>

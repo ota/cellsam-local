@@ -25,6 +25,10 @@ import {
   computeDerivedProperties,
   computeBbox,
 } from './detection.js';
+import {
+  annotationFileStem,
+  createDraftAnnotation,
+} from './annotations.js';
 import { drawResults, COLORS } from './visualize.js';
 
 // ---- グローバル状態 ----
@@ -36,6 +40,8 @@ let   inferenceBackend = 'local'; // 'local' | 'server'
 let   serverInfo       = null;
 let   manuallyExcluded = new Set();
 let   cancelToken      = null;
+let   configuredModel  = null;
+let   currentImageFileName = 'sample.png';
 const objectNotes      = new Map(); // objId → note文字列 (再構築をまたいで保持)
 
 // ---- DOM 参照 ----
@@ -55,6 +61,7 @@ const summaryText      = $('summary-text');
 const modelStatus      = $('model-status');
 const gpuStatus        = $('gpu-status');
 const restoreBtn       = $('restore-btn');
+const exportAnnotationBtn = $('export-annotation-btn');
 const modelOptions     = $('model-options');
 
 // 検出設定
@@ -108,7 +115,7 @@ const filterVals = {
   }
 
   // サンプル画像をデフォルトでロード
-  loadImageFromUrl('./assets/sample.png');
+  loadImageFromUrl('./assets/sample.png', 'sample.png');
 })();
 
 modelOptions.addEventListener('change', event => {
@@ -137,7 +144,14 @@ function updateModelControls() {
   const modelType = selectedModelType();
   if (!modelType) return;
 
-  pointsPerSideField.hidden = modelType === 'cellpose-cpsam-v2';
+  const automaticServerModels = new Set(['cellpose-cpsam-v2', 'microsam-vit-b-lm']);
+  pointsPerSideField.hidden = automaticServerModels.has(modelType);
+  if (configuredModel !== modelType) {
+    const recommendedIou = modelType === 'microsam-vit-b-lm' ? 0.70 : 0.96;
+    iouThreshSlider.value = recommendedIou.toFixed(2);
+    iouThreshVal.value = recommendedIou.toFixed(2);
+    configuredModel = modelType;
+  }
   if (inferenceBackend === 'server') {
     const provider = getServerModelProvider(serverInfo, modelType);
     modelStatus.textContent = `${modelDisplayName(modelType)} / サーバ推論 (${provider})`;
@@ -168,11 +182,12 @@ fileInput.addEventListener('change', () => {
 });
 
 function loadFile(file) {
-  loadImageFromUrl(URL.createObjectURL(file));
+  loadImageFromUrl(URL.createObjectURL(file), file.name);
 }
 
-function loadImageFromUrl(url) {
+function loadImageFromUrl(url, fileName = 'image.png') {
   inputPreview.onload = () => {
+    currentImageFileName = fileName;
     inputPreview.hidden = false;
     uploadPlaceholder.hidden = true;
     runBtn.disabled = false;
@@ -187,6 +202,7 @@ function resetResult() {
   currentModelName = '';
   manuallyExcluded = new Set();
   objectNotes.clear();
+  exportAnnotationBtn.disabled = true;
   outputCanvas.style.display = 'none';
   canvasPlaceholder.style.display = '';
   summaryText.innerHTML = '<span style="color:#555">—</span>';
@@ -335,6 +351,55 @@ restoreBtn.addEventListener('click', () => {
   render(`全除外をリセットしました\n`);
 });
 
+exportAnnotationBtn.addEventListener('click', async () => {
+  if (!currentResult) return;
+  const previousText = exportAnnotationBtn.textContent;
+  exportAnnotationBtn.disabled = true;
+  exportAnnotationBtn.textContent = 'JSON生成中...';
+  try {
+    const imageData = currentResult.imageData;
+    const embeddedDataUrl = imageDataToPngDataUrl(imageData);
+    const pixelSha256 = await hashImagePixels(imageData);
+    const modelType = selectedModelType();
+    const provider = inferenceBackend === 'server'
+      ? getServerModelProvider(serverInfo, modelType)
+      : sam2.executionProvider;
+    const document = createDraftAnnotation({
+      image: {
+        fileName: currentImageFileName,
+        width: imageData.width,
+        height: imageData.height,
+        pixelSha256,
+        embeddedDataUrl,
+      },
+      source: {
+        modelKey: modelType,
+        modelName: currentResult.modelName,
+        backend: inferenceBackend,
+        provider,
+        settings: currentDetectionSettings(),
+      },
+      objects: currentResult.objects.map(object => ({
+        ...object,
+        notes: objectNotes.get(object.objId) ?? '',
+      })),
+    });
+    downloadBlob(
+      JSON.stringify(document),
+      `${annotationFileStem(currentImageFileName)}.annotation-draft.json`,
+      'application/json',
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Annotation export failed:', error);
+    progressArea.hidden = false;
+    progressText.textContent = `JSON保存エラー: ${message}`;
+  } finally {
+    exportAnnotationBtn.disabled = !currentResult;
+    exportAnnotationBtn.textContent = previousText;
+  }
+});
+
 // ---- キャンバスクリック → 個別除外/復元 ----
 outputCanvas.addEventListener('click', e => {
   if (!currentResult) return;
@@ -383,6 +448,7 @@ async function rebuildFromRawMasks() {
     outputCanvas.style.display = 'none';
     canvasPlaceholder.style.display = '';
     currentResult = null;
+    exportAnnotationBtn.disabled = true;
     return;
   }
 
@@ -408,6 +474,7 @@ async function rebuildFromRawMasks() {
   });
 
   manuallyExcluded = new Set();
+  exportAnnotationBtn.disabled = false;
   autoAdjustSliders(objects);
   outputCanvas.style.display = 'block';
   canvasPlaceholder.style.display = 'none';
@@ -577,6 +644,45 @@ function getImageData(imgEl) {
   const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
   canvas.getContext('2d').drawImage(imgEl, 0, 0);
   return canvas.getContext('2d').getImageData(0, 0, w, h);
+}
+
+function imageDataToPngDataUrl(imageData) {
+  const canvas = Object.assign(document.createElement('canvas'), {
+    width: imageData.width,
+    height: imageData.height,
+  });
+  canvas.getContext('2d').putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+async function hashImagePixels(imageData) {
+  if (!globalThis.crypto?.subtle) return null;
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', imageData.data);
+  return [...new Uint8Array(digest)]
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function currentDetectionSettings() {
+  return {
+    pointsPerSide: parseInt(pointsPerSideSlider.value),
+    predIouThresh: parseFloat(iouThreshSlider.value),
+    minMaskArea: parseInt(minMaskAreaSlider.value),
+    maxMaskRatio: parseFloat(maxMaskRatioSlider.value),
+    filters: Object.fromEntries(
+      Object.entries(filterSliders).map(([key, slider]) => [key, parseFloat(slider.value)]),
+    ),
+  };
+}
+
+function downloadBlob(content, fileName, contentType) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = Object.assign(document.createElement('a'), { href: url, download: fileName });
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function yieldToUI() {

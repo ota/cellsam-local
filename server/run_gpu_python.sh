@@ -49,5 +49,6 @@ case "$GPU_LIB_MODE" in
 esac
 
 export CELLPOSE_LOCAL_MODELS_PATH="${CELLPOSE_LOCAL_MODELS_PATH:-$ROOT/.cache/cellpose/models}"
+export MICROSAM_MODEL_CACHE="${MICROSAM_MODEL_CACHE:-$ROOT/.cache/microsam/models}"
 
 exec "$PYTHON" "$@"

@@ -4,8 +4,9 @@ import os
 import tempfile
 import urllib.request
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
+
+from .image_utils import decode_rgb_image
 
 
 HF_BASE = "https://huggingface.co"
@@ -45,6 +46,7 @@ MODEL_FAMILIES = {
   **{model: "sam2" for model in SAM2_MODEL_URLS},
   **{model: "mobile-sam" for model in MOBILE_SAM_MODEL_URLS},
   "cellpose-cpsam-v2": "cellpose",
+  "microsam-vit-b-lm": "microsam",
 }
 
 MODEL_KEYS = list(MODEL_FAMILIES.keys())
@@ -56,6 +58,7 @@ MODEL_LABELS = {
   "large": "SAM2.1-Large",
   "mobile-sam": "MobileSAM",
   "cellpose-cpsam-v2": "Cellpose-SAM v2",
+  "microsam-vit-b-lm": "MicroSAM ViT-B LM",
 }
 
 SAM2_SIZE = 1024
@@ -77,6 +80,7 @@ class Sam2OnnxSegmenter:
     self.cache_dir = Path(cache_dir or os.getenv("CELLSAM_MODEL_CACHE", default_cache))
     self.sessions: dict[str, ModelSessions] = {}
     self._cellpose = None
+    self._microsam = None
     self._ort = None
     self._np = None
     self._image_cls = None
@@ -84,6 +88,7 @@ class Sam2OnnxSegmenter:
   def health(self) -> dict:
     onnx = self._onnx_health()
     cellpose = _cellpose_health()
+    microsam = _microsam_health()
     available_models = []
     providers = {}
 
@@ -93,10 +98,13 @@ class Sam2OnnxSegmenter:
     if cellpose["available"]:
       available_models.extend(cellpose.get("models", []))
       providers["cellpose"] = cellpose.get("provider")
+    if microsam["available"]:
+      available_models.extend(microsam.get("models", []))
+      providers["microsam"] = microsam.get("provider")
 
     return {
       "ready": bool(available_models),
-      "provider": providers.get("onnx") or providers.get("cellpose"),
+      "provider": providers.get("onnx") or providers.get("cellpose") or providers.get("microsam"),
       "providers": providers,
       "availableProviders": onnx.get("availableProviders", []),
       "models": available_models,
@@ -104,6 +112,7 @@ class Sam2OnnxSegmenter:
       "onnx": onnx,
       "experimentalModels": {
         "cellpose": cellpose,
+        "microsam": microsam,
       },
     }
 
@@ -114,13 +123,16 @@ class Sam2OnnxSegmenter:
     family = MODEL_FAMILIES.get(model)
     if family == "cellpose":
       return self._segment_cellpose_image_bytes(content, model)
+    if family == "microsam":
+      return self._segment_microsam_image_bytes(content, model)
     if family is None:
       raise ValueError(f"Unknown model: {model}")
 
     ort, np, image_cls = self._deps()
     sessions = self._load_model(model, ort)
 
-    image = image_cls.open(BytesIO(content)).convert("RGB")
+    from PIL import ImageOps
+    image = decode_rgb_image(content, image_cls, ImageOps)
     if family == "mobile-sam":
       prep = self._preprocess_image(image, np, center_pad=False)
       encoder_output = _named_outputs(
@@ -167,6 +179,12 @@ class Sam2OnnxSegmenter:
       from .cellpose_backend import CellposeBackend
       self._cellpose = CellposeBackend()
     return self._cellpose.segment_image_bytes(content, model)
+
+  def _segment_microsam_image_bytes(self, content: bytes, model: str) -> dict:
+    if self._microsam is None:
+      from .microsam_backend import MicroSamBackend
+      self._microsam = MicroSamBackend()
+    return self._microsam.segment_image_bytes(content, model)
 
   def _deps(self):
     if self._ort is not None:
@@ -350,6 +368,21 @@ def _cellpose_health() -> dict:
       ),
     }
   return cellpose_health()
+
+
+def _microsam_health() -> dict:
+  try:
+    from .microsam_backend import microsam_health
+  except Exception as exc:
+    return {
+      "available": False,
+      "error": str(exc),
+      "license": (
+        "micro-sam code is MIT; MicroSAM-LM-Generalist-ViT-B weights are CC-BY-4.0; "
+        "Segment Anything code is Apache-2.0."
+      ),
+    }
+  return microsam_health()
 
 
 def _download_atomic(url: str, dest: Path):

@@ -67,6 +67,11 @@ def index_html():
   return FileResponse(ROOT / "index.html")
 
 
+@app.get("/annotate.html")
+def annotate_html():
+  return FileResponse(ROOT / "annotate.html")
+
+
 app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")
 app.mount("/css", StaticFiles(directory=ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=ROOT / "js"), name="js")

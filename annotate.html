@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CellSAM Annotation</title>
+  <link rel="stylesheet" href="css/annotation.css">
+</head>
+<body>
+  <div class="annotation-app">
+    <header class="annotation-header">
+      <a class="brand" href="index.html">CellSAM Local</a>
+      <h1>Ground Truth Annotation</h1>
+      <span id="document-state" class="document-state">未読込</span>
+    </header>
+
+    <main class="annotation-layout">
+      <aside class="annotation-sidebar annotation-sidebar-left">
+        <section class="annotation-group">
+          <h2>データ</h2>
+          <input id="json-file-input" type="file" accept="application/json,.json" hidden>
+          <input id="image-file-input" type="file" accept="image/*" hidden>
+          <div class="button-grid">
+            <button id="open-json-btn" class="control-button primary" type="button">JSONを開く</button>
+            <button id="open-image-btn" class="control-button" type="button">画像を開く</button>
+          </div>
+          <dl class="document-meta">
+            <div><dt>画像</dt><dd id="image-name">-</dd></div>
+            <div><dt>サイズ</dt><dd id="image-size">-</dd></div>
+            <div><dt>モデル</dt><dd id="source-model">-</dd></div>
+          </dl>
+          <label class="toggle-row">
+            <input id="blind-review" type="checkbox" checked>
+            <span>Blind review</span>
+          </label>
+        </section>
+
+        <section class="annotation-group">
+          <h2>ツール</h2>
+          <div id="tool-selector" class="segmented-control" role="group" aria-label="編集ツール">
+            <button type="button" data-tool="select" class="active" title="オブジェクト選択">選択</button>
+            <button type="button" data-tool="brush" title="選択マスクへ追加">ブラシ</button>
+            <button type="button" data-tool="erase" title="選択マスクから消去">消去</button>
+            <button type="button" data-tool="polygon" title="ポリゴンで領域追加">ポリゴン</button>
+            <button type="button" data-tool="pan" title="キャンバス移動">移動</button>
+          </div>
+          <label class="range-field">
+            <span>ブラシ径</span>
+            <input id="brush-size" type="range" min="2" max="160" step="2" value="32">
+            <output id="brush-size-value">32 px</output>
+          </label>
+          <label class="range-field">
+            <span>マスク濃度</span>
+            <input id="mask-opacity" type="range" min="0.1" max="0.8" step="0.05" value="0.4">
+            <output id="mask-opacity-value">40%</output>
+          </label>
+          <label class="toggle-row">
+            <input id="show-rejected" type="checkbox">
+            <span>却下マスクを表示</span>
+          </label>
+        </section>
+
+        <section class="annotation-group">
+          <h2>編集</h2>
+          <div class="button-grid three">
+            <button id="undo-btn" class="control-button icon-command" type="button" title="元に戻す" disabled>Undo</button>
+            <button id="redo-btn" class="control-button icon-command" type="button" title="やり直す" disabled>Redo</button>
+            <button id="new-object-btn" class="control-button" type="button" title="空のオブジェクトを追加" disabled>新規</button>
+          </div>
+          <div class="button-grid">
+            <button id="accept-btn" class="control-button accept" type="button" disabled>承認</button>
+            <button id="reject-btn" class="control-button reject" type="button" disabled>却下</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="annotation-workspace">
+        <div class="workspace-toolbar">
+          <div class="zoom-controls" role="group" aria-label="ズーム">
+            <button id="zoom-out-btn" type="button" title="縮小">-</button>
+            <output id="zoom-value">100%</output>
+            <button id="zoom-in-btn" type="button" title="拡大">+</button>
+            <button id="fit-btn" type="button">全体</button>
+          </div>
+          <div id="polygon-actions" class="polygon-actions" hidden>
+            <button id="finish-polygon-btn" type="button" disabled>確定</button>
+            <button id="cancel-polygon-btn" type="button">取消</button>
+          </div>
+        </div>
+        <div id="canvas-shell" class="canvas-shell">
+          <canvas id="annotation-canvas"></canvas>
+          <div id="canvas-empty" class="canvas-empty">JSONを開いてください</div>
+        </div>
+        <footer class="workspace-status">
+          <span id="pointer-position">x: -, y: -</span>
+          <span id="status-message">待機中</span>
+        </footer>
+      </section>
+
+      <aside class="annotation-sidebar annotation-sidebar-right">
+        <section class="object-header">
+          <div>
+            <h2>オブジェクト</h2>
+            <span id="object-count">0</span>
+          </div>
+          <div class="status-counts">
+            <span id="accepted-count" class="accepted">0 承認</span>
+            <span id="candidate-count" class="candidate">0 候補</span>
+            <span id="rejected-count" class="rejected">0 却下</span>
+          </div>
+        </section>
+        <div id="object-list" class="object-list"></div>
+        <section class="object-detail">
+          <label>
+            <span>メモ</span>
+            <textarea id="object-notes" rows="3" disabled></textarea>
+          </label>
+        </section>
+        <section class="export-actions">
+          <button id="save-draft-btn" class="control-button" type="button" disabled>下書きJSON</button>
+          <button id="save-ground-truth-btn" class="control-button primary" type="button" disabled>正解JSON</button>
+          <button id="save-label-btn" class="control-button" type="button" disabled>Label PNG</button>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script type="module" src="js/annotation_app.js"></script>
+</body>
+</html>

@@ -24,10 +24,15 @@ describe('server model metadata', () => {
           models: ['cellpose-cpsam-v2'],
           provider: 'PyTorch CUDA',
         },
+        microsam: {
+          models: ['microsam-vit-b-lm'],
+          provider: 'PyTorch CUDA',
+        },
       },
     };
 
     assert.equal(getServerModelProvider(info, 'cellpose-cpsam-v2'), 'PyTorch CUDA');
+    assert.equal(getServerModelProvider(info, 'microsam-vit-b-lm'), 'PyTorch CUDA');
     assert.equal(getServerModelProvider(info, 'tiny'), 'CUDAExecutionProvider');
   });
 });

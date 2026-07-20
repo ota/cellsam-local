@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from io import BytesIO
+
+from .image_utils import decode_rgb_image
 
 
 CELLPOSE_MODELS = {
@@ -57,8 +58,8 @@ class CellposeBackend:
     if model_key not in CELLPOSE_MODELS:
       raise ValueError(f"Unknown Cellpose model: {model_key}")
 
-    np, image_cls = self._deps()
-    image = image_cls.open(BytesIO(content)).convert("RGB")
+    np, image_cls, image_ops = self._deps()
+    image = decode_rgb_image(content, image_cls, image_ops)
     arr = np.asarray(image)
 
     model = self._load_model(model_key)
@@ -130,12 +131,12 @@ class CellposeBackend:
   def _deps(self):
     try:
       import numpy as np
-      from PIL import Image
+      from PIL import Image, ImageOps
     except ImportError as exc:
       raise RuntimeError(
         "Cellpose backend requires numpy and Pillow from server/requirements-cellpose.txt"
       ) from exc
-    return np, Image
+    return np, Image, ImageOps
 
 
 def first_eval_output(result):
